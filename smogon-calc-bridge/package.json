@@ -1,0 +1,13 @@
+{
+  "name": "smogon-calc-bridge",
+  "version": "1.0.0",
+  "description": "Bridge between Python and @smogon/calc",
+  "main": "calc_server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node calc_server.js"
+  },
+  "dependencies": {
+    "@smogon/calc": "^0.10.0"
+  }
+}

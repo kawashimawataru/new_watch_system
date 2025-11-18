@@ -1,4 +1,26 @@
-"""Damage calculator built on top of Showdown data."""
+"""
+⚠️ DEPRECATED: このダメージ計算実装は非推奨です ⚠️
+
+【理由】
+- Multiscale等の重要特性が未実装
+- テラスタル非対応
+- @smogon/calc との比較で30%以上の計算誤差を確認
+
+【代替】
+predictor/engine/smogon_calc_wrapper.py を使用してください。
+Pokémon Showdown公式の @smogon/calc を使用します。
+
+【移行日】
+2025年11月19日 (Phase 1.2完了)
+
+【詳細】
+docs/phase1_2_smogon_calc_integration.md を参照
+
+---
+
+Damage calculator built on top of Showdown data.
+(Legacy implementation - for compatibility only)
+"""
 
 from __future__ import annotations
 
