@@ -1,0 +1,58 @@
+{
+  "Flutter Mane": [
+    {
+      "label": "timid_focus_sash",
+      "nature": "Timid",
+      "weight": 0.7,
+      "evs": {"hp": 0, "def": 4, "spa": 252, "spe": 252}
+    },
+    {
+      "label": "bulky_speed",
+      "nature": "Timid",
+      "weight": 0.3,
+      "evs": {"hp": 108, "def": 4, "spa": 252, "spe": 140}
+    }
+  ],
+  "Arcanine": [
+    {
+      "label": "bulky_support",
+      "nature": "Impish",
+      "weight": 0.6,
+      "evs": {"hp": 236, "atk": 4, "def": 92, "spd": 172, "spe": 4}
+    },
+    {
+      "label": "assault_vest",
+      "nature": "Careful",
+      "weight": 0.4,
+      "evs": {"hp": 180, "atk": 76, "def": 4, "spd": 220, "spe": 28}
+    }
+  ],
+  "Iron Bundle": [
+    {
+      "label": "standard_booster",
+      "nature": "Timid",
+      "weight": 0.85,
+      "evs": {"hp": 4, "spa": 252, "spe": 252}
+    },
+    {
+      "label": "bulky_tailwind",
+      "nature": "Timid",
+      "weight": 0.15,
+      "evs": {"hp": 132, "def": 4, "spa": 252, "spe": 120}
+    }
+  ],
+  "Amoonguss": [
+    {
+      "label": "trick_room",
+      "nature": "Relaxed",
+      "weight": 0.7,
+      "evs": {"hp": 236, "def": 156, "spd": 116}
+    },
+    {
+      "label": "spd_focus",
+      "nature": "Sassy",
+      "weight": 0.3,
+      "evs": {"hp": 252, "def": 84, "spd": 172}
+    }
+  ]
+}

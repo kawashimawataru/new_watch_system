@@ -1,0 +1,146 @@
+"""Lightweight heuristic evaluation for quick recommendations."""
+
+from __future__ import annotations
+
+import math
+from collections import defaultdict
+from typing import Dict, List, Sequence
+
+from predictor.core.models import (
+    ActionCandidate,
+    ActionScore,
+    BattleState,
+    EvaluationResult,
+    PlayerEvaluation,
+    PokemonRecommendation,
+)
+
+
+class HeuristicEvaluator:
+    """Implements the plan described as Algorithm A in the spec."""
+
+    def __init__(self, weights: Dict[str, float] | None = None):
+        self.weights = weights or {
+            "hp": 3.0,
+            "status": 0.75,
+            "reserves": 0.5,
+            "speed": 0.25,
+            "field": 0.4,
+        }
+        self.tag_bonus = {
+            "protect": 0.5,
+            "spread": 0.35,
+            "priority": 0.2,
+            "speed_control": 0.35,
+            "boost": 0.3,
+            "pivot": 0.25,
+        }
+
+    def evaluate(self, battle_state: BattleState) -> EvaluationResult:
+        """Return win rates and action suggestions for both players."""
+
+        board_score = self._state_value(battle_state)
+        win_rate_a = self._sigmoid(board_score)
+        win_rate_b = 1.0 - win_rate_a
+
+        rec_a = self._score_actions("A", battle_state)
+        rec_b = self._score_actions("B", battle_state)
+
+        return EvaluationResult(
+            player_a=PlayerEvaluation(win_rate=win_rate_a, active=rec_a),
+            player_b=PlayerEvaluation(win_rate=win_rate_b, active=rec_b),
+        )
+
+    def _state_value(self, state: BattleState) -> float:
+        hp_a = sum(p.hp_fraction for p in state.player_a.active)
+        hp_b = sum(p.hp_fraction for p in state.player_b.active)
+        reserves_a = len(state.player_a.reserves)
+        reserves_b = len(state.player_b.reserves)
+        status_a = sum(1 for p in state.player_a.active if p.status)
+        status_b = sum(1 for p in state.player_b.active if p.status)
+        speed_a = sum(p.boosts.get("spe", 0) for p in state.player_a.active)
+        speed_b = sum(p.boosts.get("spe", 0) for p in state.player_b.active)
+
+        field_bonus = 0.0
+        if state.room == "trick":
+            field_bonus += 0.3
+        if state.weather in {"rain", "sun"}:
+            field_bonus += 0.1
+
+        value = 0.0
+        value += self.weights["hp"] * (hp_a - hp_b)
+        value += self.weights["status"] * (status_b - status_a)
+        value += self.weights["reserves"] * (reserves_a - reserves_b)
+        value += self.weights["speed"] * (speed_a - speed_b)
+        value += self.weights["field"] * field_bonus
+        value += state.player_a.score_bias - state.player_b.score_bias
+        return value
+
+    def _score_actions(self, player_label: str, state: BattleState) -> List[PokemonRecommendation]:
+        actions = state.legal_actions.get(player_label)
+        if not actions:
+            return self._fallback_recommendations(
+                state.player_a if player_label == "A" else state.player_b
+            )
+
+        per_actor: Dict[str, List[ActionScore]] = defaultdict(list)
+        for action in actions:
+            score = self._score_action_candidate(action)
+            per_actor[action.actor].append(
+                ActionScore(move=action.move, target=action.target, score=score)
+            )
+
+        recommendations = []
+        for actor, move_scores in per_actor.items():
+            normalized = self._normalize_scores(move_scores)
+            recommendations.append(
+                PokemonRecommendation(name=actor, suggested_moves=normalized)
+            )
+        return recommendations
+
+    def _score_action_candidate(self, action: ActionCandidate) -> float:
+        score = 0.1  # base prior to avoid zeros
+        for tag in action.tags:
+            score += self.tag_bonus.get(tag, 0.0)
+        if action.metadata.get("is_stab"):
+            score += 0.2
+        if action.metadata.get("is_super_effective"):
+            score += 0.35
+        if action.metadata.get("coverage_multiplier"):
+            score += 0.1 * action.metadata["coverage_multiplier"]
+        if damage := action.metadata.get("estimatedDamage"):
+            score += 0.4 * damage.get("koChance", 0.0)
+            score += 0.1 * (damage.get("maxPercent", 0.0) / 100.0)
+            score += 0.05 * damage.get("hitChance", 0.0)
+        if action.target and "slot2" in action.target:
+            score += 0.05  # encourage spread coverage on the second slot
+        if action.metadata.get("is_switch"):
+            score -= 0.15
+        return max(score, 0.01)
+
+    @staticmethod
+    def _normalize_scores(scores: Sequence[ActionScore]) -> List[ActionScore]:
+        total = sum(max(s.score, 0.0) for s in scores)
+        if total <= 0:
+            uniform = 1.0 / len(scores) if scores else 0.0
+            return [ActionScore(move=s.move, target=s.target, score=uniform) for s in scores]
+        return [
+            ActionScore(move=s.move, target=s.target, score=max(s.score, 0.0) / total)
+            for s in scores
+        ]
+
+    @staticmethod
+    def _fallback_recommendations(player_state) -> List[PokemonRecommendation]:
+        recommendations = []
+        for pokemon in player_state.active:
+            recommendations.append(
+                PokemonRecommendation(
+                    name=pokemon.name,
+                    suggested_moves=[ActionScore(move="Struggle", target=None, score=1.0)],
+                )
+            )
+        return recommendations
+
+    @staticmethod
+    def _sigmoid(value: float) -> float:
+        return 1.0 / (1.0 + math.exp(-value))

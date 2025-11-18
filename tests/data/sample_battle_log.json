@@ -1,0 +1,166 @@
+{
+  "currentTurn": 5,
+  "state": {
+    "A": {
+      "name": "Player A",
+      "active": [
+        {
+          "name": "Flutter Mane",
+          "hp": 72,
+          "status": null,
+          "boosts": {"spe": 1},
+          "moves": ["Moonblast", "Shadow Ball", "Dazzling Gleam", "Protect"],
+          "item": "Focus Sash",
+          "teraType": "Fairy"
+        },
+        {
+          "name": "Arcanine",
+          "hp": 48,
+          "status": null,
+          "boosts": {"atk": 1},
+          "moves": ["Flare Blitz", "Extreme Speed", "Howl", "Protect"],
+          "item": "Safety Goggles",
+          "teraType": "Grass"
+        }
+      ],
+      "reserves": ["Iron Hands", "Farigiraf"]
+    },
+    "B": {
+      "name": "Player B",
+      "active": [
+        {
+          "name": "Iron Bundle",
+          "hp": "54%",
+          "status": null,
+          "boosts": {"spe": 1},
+          "moves": ["Hydro Pump", "Freeze-Dry", "Icy Wind", "Protect"],
+          "item": "Booster Energy",
+          "teraType": "Water"
+        },
+        {
+          "name": "Amoonguss",
+          "hp": 80,
+          "status": "slp",
+          "boosts": {},
+          "moves": ["Spore", "Rage Powder", "Pollen Puff", "Protect"],
+          "item": "Sitrus Berry",
+          "teraType": "Water"
+        }
+      ],
+      "reserves": ["Gholdengo"]
+    },
+    "field": {
+      "weather": "rain",
+      "terrain": "grassy",
+      "room": null
+    }
+  },
+  "legalActions": {
+    "A": [
+      {
+        "pokemon": "Flutter Mane",
+        "slot": 0,
+        "move": "Protect",
+        "target": "self",
+        "tags": ["protect"],
+        "priority": 4
+      },
+      {
+        "pokemon": "Flutter Mane",
+        "slot": 0,
+        "move": "Moonblast",
+        "target": "B_slot1",
+        "tags": ["spread"],
+        "metadata": {"is_stab": true, "is_super_effective": true}
+      },
+      {
+        "pokemon": "Arcanine",
+        "slot": 1,
+        "move": "Flare Blitz",
+        "target": "B_slot2",
+        "metadata": {"is_stab": true},
+        "tags": ["pivot"]
+      },
+      {
+        "pokemon": "Arcanine",
+        "slot": 1,
+        "move": "Howl",
+        "target": "team",
+        "tags": ["boost"]
+      }
+    ],
+    "B": [
+      {
+        "pokemon": "Iron Bundle",
+        "slot": 0,
+        "move": "Hydro Pump",
+        "target": "A_slot2",
+        "metadata": {"is_super_effective": true}
+      },
+      {
+        "pokemon": "Iron Bundle",
+        "slot": 0,
+        "move": "Icy Wind",
+        "target": "spread",
+        "tags": ["speed_control", "spread"]
+      },
+      {
+        "pokemon": "Amoonguss",
+        "slot": 1,
+        "move": "Rage Powder",
+        "target": "self",
+        "tags": ["redirection"]
+      }
+    ]
+  }
+,
+  "turns": [
+    {
+      "number": 4,
+      "events": [
+        {
+          "type": "move",
+          "player": "A",
+          "pokemon": "Flutter Mane",
+          "move": "Moonblast",
+          "speed": 205,
+          "priorityResolved": 0,
+          "targetPlayer": "B",
+          "targetPokemon": "Iron Bundle",
+          "damagePercent": 55,
+          "isCrit": false,
+          "attackerStatus": null,
+          "defenderStatus": null
+        },
+        {
+          "type": "move",
+          "player": "B",
+          "pokemon": "Iron Bundle",
+          "move": "Hydro Pump",
+          "speed": 204,
+          "priorityResolved": 0,
+          "targetPlayer": "A",
+          "targetPokemon": "Arcanine",
+          "damagePercent": 80,
+          "isCrit": false,
+          "attackerStatus": null,
+          "defenderStatus": null
+        },
+        {
+          "type": "move",
+          "player": "A",
+          "pokemon": "Arcanine",
+          "move": "Flare Blitz",
+          "speed": 150,
+          "priorityResolved": 0,
+          "targetPlayer": "B",
+          "targetPokemon": "Amoonguss",
+          "damagePercent": 50,
+          "isCrit": true,
+          "attackerStatus": null,
+          "defenderStatus": "slp"
+        }
+      ]
+    }
+  ]
+}
