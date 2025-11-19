@@ -2,16 +2,20 @@
 🎮 PBS-AI Ultimate: Streamlit MVP
 
 リアルタイム勝率表示と推奨行動を可視化する最小実装。
+HybridStrategist統合版 - Fast-Lane即時応答 + Slow-Lane非同期更新
 
 起動方法:
     streamlit run frontend/streamlit_app.py
 """
 
 import json
+import asyncio
+import time
 import streamlit as st
 import plotly.graph_objects as go
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Callable
+from concurrent.futures import ThreadPoolExecutor
 
 # ページ設定
 st.set_page_config(
@@ -69,8 +73,34 @@ def load_sample_data() -> Dict[str, Any]:
     return {}
 
 
+def initialize_hybrid_strategist():
+    """HybridStrategistの初期化"""
+    if "hybrid_strategist" not in st.session_state:
+        try:
+            from predictor.player.hybrid_strategist import HybridStrategist
+            # Fast-Laneモデルのパスを確認
+            model_path = Path(__file__).parent.parent / "models/fast_lane.pkl"
+            if not model_path.exists():
+                st.warning(f"⚠️ Fast-Laneモデルが見つかりません: {model_path}")
+                return None
+            
+            # HybridStrategist初期化（Slow-Laneは100 rolloutsで高速化）
+            strategist = HybridStrategist(
+                fast_model_path=str(model_path),
+                mcts_rollouts=100  # UI用に高速化
+            )
+            st.session_state["hybrid_strategist"] = strategist
+            return strategist
+        except Exception as e:
+            st.error(f"HybridStrategist初期化エラー: {e}")
+            import traceback
+            st.code(traceback.format_exc())
+            return None
+    return st.session_state["hybrid_strategist"]
+
+
 def call_evaluate_position(team_a: str, team_b: str, battle_log: Dict, estimated_evs: Optional[Dict] = None) -> Dict[str, Any]:
-    """evaluate_position を呼び出す（モック実装）"""
+    """evaluate_position を呼び出す（HybridStrategist統合版）"""
     try:
         from predictor.core.position_evaluator import evaluate_position
         result = evaluate_position(
@@ -86,8 +116,95 @@ def call_evaluate_position(team_a: str, team_b: str, battle_log: Dict, estimated
         return {}
 
 
-def render_win_rate_gauge(player_a_rate: float, player_b_rate: float):
-    """勝率ゲージを表示"""
+def dict_to_battle_state(battle_dict: Dict[str, Any]) -> Any:
+    """辞書からBattleStateオブジェクトを構築"""
+    from predictor.core.models import BattleState, PlayerState, PokemonBattleState
+    
+    def parse_pokemon(poke_dict: Dict[str, Any]) -> Any:
+        """Pokemon辞書からPokemonBattleStateを構築"""
+        return PokemonBattleState(
+            name=poke_dict.get("species", "Unknown"),
+            species=poke_dict.get("species"),
+            hp_fraction=poke_dict.get("hp", 100) / 100.0,
+            status=poke_dict.get("status"),
+            boosts=poke_dict.get("boosts", {}),
+            item=poke_dict.get("item"),
+            ability=poke_dict.get("ability"),
+            moves=poke_dict.get("moves", []),
+            is_active=True,
+            slot=0
+        )
+    
+    p1_data = battle_dict.get("p1", {})
+    p2_data = battle_dict.get("p2", {})
+    
+    player_a = PlayerState(
+        name=p1_data.get("name", "Player A"),
+        active=[parse_pokemon(p) for p in p1_data.get("active", [])],
+        reserves=[r.get("species", "Unknown") for r in p1_data.get("reserves", [])]
+    )
+    
+    player_b = PlayerState(
+        name=p2_data.get("name", "Player B"),
+        active=[parse_pokemon(p) for p in p2_data.get("active", [])],
+        reserves=[r.get("species", "Unknown") for r in p2_data.get("reserves", [])]
+    )
+    
+    return BattleState(
+        player_a=player_a,
+        player_b=player_b,
+        turn=battle_dict.get("turn", 1),
+        weather=battle_dict.get("weather"),
+        terrain=battle_dict.get("terrain"),
+        raw_log=battle_dict
+    )
+
+
+def call_hybrid_prediction(battle_state: Dict[str, Any], use_fast_only: bool = False) -> Dict[str, Any]:
+    """HybridStrategistで勝率予測"""
+    strategist = initialize_hybrid_strategist()
+    if not strategist:
+        return {}
+    
+    try:
+        # 辞書からBattleStateオブジェクトに変換
+        battle_state_obj = dict_to_battle_state(battle_state)
+        
+        # Fast-Lane予測（即時）
+        fast_result = strategist.predict_quick(battle_state_obj)
+        
+        result = {
+            "fast": {
+                "win_rate": fast_result.p1_win_rate,
+                "confidence": fast_result.confidence,
+                "recommended_action": fast_result.recommended_action.to_dict() if fast_result.recommended_action else None,
+                "inference_time_ms": fast_result.inference_time_ms,
+                "source": fast_result.source
+            }
+        }
+        
+        # Slow-Lane予測（オプション）
+        if not use_fast_only:
+            # 同期版を使用（Streamlitは基本的に同期実行）
+            _, slow_result = strategist.predict_both(battle_state_obj)
+            result["slow"] = {
+                "win_rate": slow_result.p1_win_rate,
+                "confidence": slow_result.confidence,
+                "recommended_action": slow_result.recommended_action.to_dict() if slow_result.recommended_action else None,
+                "inference_time_ms": slow_result.inference_time_ms,
+                "source": slow_result.source
+            }
+        
+        return result
+    except Exception as e:
+        st.error(f"HybridStrategist予測エラー: {e}")
+        import traceback
+        st.code(traceback.format_exc())
+        return {}
+
+
+def render_win_rate_gauge(player_a_rate: float, player_b_rate: float, confidence: float = 0.6, source: str = "fast", inference_time_ms: float = 0.0):
+    """勝率ゲージを表示（HybridStrategist結果対応）"""
     col1, col2, col3 = st.columns([1, 2, 1])
     
     with col1:
@@ -122,6 +239,16 @@ def render_win_rate_gauge(player_a_rate: float, player_b_rate: float):
     with col3:
         st.markdown(f'<p class="big-font win-rate-player-b">{player_b_rate:.1%}</p>', unsafe_allow_html=True)
         st.markdown("**Player B**")
+    
+    # メタ情報表示
+    col_meta1, col_meta2, col_meta3 = st.columns(3)
+    with col_meta1:
+        source_icon = "⚡" if source == "fast" else "🎯"
+        st.caption(f"{source_icon} **{source.upper()}** prediction")
+    with col_meta2:
+        st.caption(f"🎲 Confidence: **{confidence:.1%}**")
+    with col_meta3:
+        st.caption(f"⏱️ Inference: **{inference_time_ms:.2f}ms**")
 
 
 def render_turn_history(history: List[Dict[str, Any]]):
@@ -249,8 +376,67 @@ def main():
     tab1, tab2, tab3 = st.tabs(["📊 リアルタイム表示", "📝 入力データ", "ℹ️ 使い方"])
     
     with tab1:
-        # 評価結果の表示
-        if "evaluation_result" in st.session_state and st.session_state["evaluation_result"]:
+        # HybridStrategist結果の表示（優先）
+        if "hybrid_prediction" in st.session_state and st.session_state["hybrid_prediction"]:
+            hybrid_result = st.session_state["hybrid_prediction"]
+            
+            # Fast-Lane結果
+            if "fast" in hybrid_result:
+                fast = hybrid_result["fast"]
+                st.markdown("### ⚡ Fast-Lane 予測結果")
+                
+                win_rate_a = fast.get("win_rate", 0.5)
+                win_rate_b = 1.0 - win_rate_a
+                confidence = fast.get("confidence", 0.6)
+                inference_time = fast.get("inference_time_ms", 0.0)
+                
+                # 重要ターン判定
+                excitement = abs(win_rate_a - win_rate_b) > 0.3
+                if excitement:
+                    st.markdown('<div class="excitement-badge">🔥 CRITICAL TURN!</div>', unsafe_allow_html=True)
+                
+                render_win_rate_gauge(win_rate_a, win_rate_b, confidence, "fast", inference_time)
+                
+                # 推奨行動表示
+                recommended = fast.get("recommended_action")
+                if recommended:
+                    st.info(f"💡 **推奨行動**: {recommended.get('type', 'N/A')} - {recommended.get('details', 'N/A')}")
+            
+            # Slow-Lane結果（あれば）
+            if "slow" in hybrid_result:
+                st.markdown("---")
+                st.markdown("### 🎯 Slow-Lane 精密予測結果")
+                
+                slow = hybrid_result["slow"]
+                win_rate_a_slow = slow.get("win_rate", 0.5)
+                win_rate_b_slow = 1.0 - win_rate_a_slow
+                confidence_slow = slow.get("confidence", 0.9)
+                inference_time_slow = slow.get("inference_time_ms", 0.0)
+                
+                render_win_rate_gauge(win_rate_a_slow, win_rate_b_slow, confidence_slow, "slow", inference_time_slow)
+                
+                # 推奨行動表示
+                recommended_slow = slow.get("recommended_action")
+                if recommended_slow:
+                    st.success(f"🎯 **精密推奨**: {recommended_slow.get('type', 'N/A')} - {recommended_slow.get('details', 'N/A')}")
+                
+                # Fast vs Slow 比較
+                st.markdown("---")
+                st.markdown("### 📊 Fast vs Slow 比較")
+                col_cmp1, col_cmp2, col_cmp3 = st.columns(3)
+                with col_cmp1:
+                    diff = abs(win_rate_a - win_rate_a_slow)
+                    st.metric("勝率差", f"{diff:.1%}", delta=None)
+                with col_cmp2:
+                    speedup = inference_time_slow / inference_time if inference_time > 0 else 0
+                    st.metric("速度比", f"{speedup:.1f}x", delta=None)
+                with col_cmp3:
+                    agreement = "一致" if abs(win_rate_a - win_rate_a_slow) < 0.1 else "不一致"
+                    agreement_icon = "✅" if agreement == "一致" else "⚠️"
+                    st.metric("判定", f"{agreement_icon} {agreement}")
+        
+        # 従来のevaluation_result表示（後方互換）
+        elif "evaluation_result" in st.session_state and st.session_state["evaluation_result"]:
             result = st.session_state["evaluation_result"]
             
             # 勝率表示
@@ -265,7 +451,7 @@ def main():
             if excitement:
                 st.markdown('<div class="excitement-badge">🔥 CRITICAL TURN!</div>', unsafe_allow_html=True)
             
-            render_win_rate_gauge(win_rate_a, win_rate_b)
+            render_win_rate_gauge(win_rate_a, win_rate_b, confidence=0.5, source="heuristic", inference_time_ms=0.0)
             
             st.markdown("---")
             
@@ -299,7 +485,7 @@ def main():
             ]
             render_turn_history(mock_history)
         else:
-            st.info("👈 サイドバーから「サンプルデータを読み込む」→「入力データ」タブで「評価実行」してください")
+            st.info("👈 サイドバーから「サンプルデータを読み込む」→「入力データ」タブで「Fast-Lane評価」または「統合評価」を実行してください")
     
     with tab2:
         st.subheader("📝 入力データ")
@@ -338,7 +524,71 @@ def main():
         )
         
         # 評価実行ボタン
-        if st.button("🚀 評価を実行", use_container_width=True, type="primary"):
+        col_btn1, col_btn2 = st.columns(2)
+        
+        with col_btn1:
+            if st.button("⚡ Fast-Lane評価（即時）", use_container_width=True, type="primary"):
+                if not team_a or not team_b or not battle_log_str:
+                    st.error("Team A, Team B, Battle Log を入力してください")
+                else:
+                    with st.spinner("⚡ Fast-Lane評価中..."):
+                        try:
+                            battle_log = json.loads(battle_log_str)
+                            
+                            # HybridStrategist Fast-Lane予測
+                            hybrid_result = call_hybrid_prediction(battle_log, use_fast_only=True)
+                            
+                            if hybrid_result and "fast" in hybrid_result:
+                                fast = hybrid_result["fast"]
+                                st.session_state["hybrid_prediction"] = hybrid_result
+                                st.session_state["team_a"] = team_a
+                                st.session_state["team_b"] = team_b
+                                st.session_state["battle_log"] = battle_log_str
+                                st.success(f"✅ Fast-Lane評価完了！({fast['inference_time_ms']:.2f}ms)")
+                                st.rerun()
+                            else:
+                                st.error("Fast-Lane評価に失敗しました")
+                        except json.JSONDecodeError as e:
+                            st.error(f"JSON パースエラー: {e}")
+                        except Exception as e:
+                            st.error(f"エラー: {e}")
+        
+        with col_btn2:
+            if st.button("🎯 統合評価（Fast + Slow）", use_container_width=True):
+                if not team_a or not team_b or not battle_log_str:
+                    st.error("Team A, Team B, Battle Log を入力してください")
+                else:
+                    with st.spinner("🎯 統合評価中（Fast + Slow-Lane）..."):
+                        try:
+                            battle_log = json.loads(battle_log_str)
+                            
+                            # HybridStrategist統合予測
+                            hybrid_result = call_hybrid_prediction(battle_log, use_fast_only=False)
+                            
+                            if hybrid_result and "fast" in hybrid_result:
+                                fast = hybrid_result.get("fast", {})
+                                slow = hybrid_result.get("slow", {})
+                                st.session_state["hybrid_prediction"] = hybrid_result
+                                st.session_state["team_a"] = team_a
+                                st.session_state["team_b"] = team_b
+                                st.session_state["battle_log"] = battle_log_str
+                                
+                                if slow:
+                                    st.success(f"✅ 統合評価完了！Fast: {fast.get('inference_time_ms', 0):.2f}ms / Slow: {slow.get('inference_time_ms', 0):.2f}ms")
+                                else:
+                                    st.success(f"✅ Fast-Lane評価完了！({fast.get('inference_time_ms', 0):.2f}ms)")
+                                st.rerun()
+                            else:
+                                st.error("統合評価に失敗しました")
+                        except json.JSONDecodeError as e:
+                            st.error(f"JSON パースエラー: {e}")
+                        except Exception as e:
+                            st.error(f"エラー: {e}")
+        
+        st.divider()
+        
+        # 従来の評価実行ボタン（後方互換）
+        if st.button("🚀 Position評価（従来版）", use_container_width=True):
             if not team_a or not team_b or not battle_log_str:
                 st.error("Team A, Team B, Battle Log を入力してください")
             else:
@@ -364,6 +614,11 @@ def main():
                         st.error(f"JSON パースエラー: {e}")
                     except Exception as e:
                         st.error(f"エラー: {e}")
+        
+        # HybridStrategist結果表示
+        if "hybrid_prediction" in st.session_state and st.session_state["hybrid_prediction"]:
+            with st.expander("🔍 HybridStrategist結果 (Raw JSON)", expanded=False):
+                st.json(st.session_state["hybrid_prediction"])
         
         # Raw JSON 表示
         if "evaluation_result" in st.session_state and st.session_state["evaluation_result"]:

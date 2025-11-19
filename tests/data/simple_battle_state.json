@@ -1,0 +1,96 @@
+{
+  "turn": 5,
+  "p1": {
+    "name": "Player A",
+    "active": [
+      {
+        "species": "Rillaboom",
+        "level": 50,
+        "hp": 85,
+        "maxhp": 100,
+        "status": null,
+        "ability": "Grassy Surge",
+        "item": "Assault Vest",
+        "moves": ["Fake Out", "Grassy Glide", "Wood Hammer", "U-turn"],
+        "boosts": {
+          "atk": 0,
+          "def": 0,
+          "spa": 0,
+          "spd": 0,
+          "spe": 0
+        }
+      },
+      {
+        "species": "Incineroar",
+        "level": 50,
+        "hp": 95,
+        "maxhp": 100,
+        "status": null,
+        "ability": "Intimidate",
+        "item": "Sitrus Berry",
+        "moves": ["Fake Out", "Flare Blitz", "Darkest Lariat", "Parting Shot"],
+        "boosts": {
+          "atk": 0,
+          "def": 0,
+          "spa": 0,
+          "spd": 0,
+          "spe": 0
+        }
+      }
+    ],
+    "reserves": [
+      { "species": "Urshifu", "hp": 100, "maxhp": 100, "status": null },
+      { "species": "Regieleki", "hp": 0, "maxhp": 100, "status": "fnt" }
+    ]
+  },
+  "p2": {
+    "name": "Player B",
+    "active": [
+      {
+        "species": "Zacian-Crowned",
+        "level": 50,
+        "hp": 70,
+        "maxhp": 100,
+        "status": null,
+        "ability": "Intrepid Sword",
+        "item": "Rusted Sword",
+        "moves": ["Behemoth Blade", "Play Rough", "Sacred Sword", "Protect"],
+        "boosts": {
+          "atk": 1,
+          "def": 0,
+          "spa": 0,
+          "spd": 0,
+          "spe": 0
+        }
+      },
+      {
+        "species": "Kyogre",
+        "level": 50,
+        "hp": 50,
+        "maxhp": 100,
+        "status": "burned",
+        "ability": "Drizzle",
+        "item": "Choice Scarf",
+        "moves": ["Water Spout", "Origin Pulse", "Ice Beam", "Thunder"],
+        "boosts": {
+          "atk": 0,
+          "def": 0,
+          "spa": 0,
+          "spd": 0,
+          "spe": 0
+        }
+      }
+    ],
+    "reserves": [
+      { "species": "Grimmsnarl", "hp": 100, "maxhp": 100, "status": null },
+      { "species": "Tornadus", "hp": 100, "maxhp": 100, "status": null }
+    ]
+  },
+  "weather": "Rain",
+  "terrain": "Grassy Terrain",
+  "pseudo_weathers": [],
+  "side_conditions": {
+    "p1": [],
+    "p2": []
+  }
+}
