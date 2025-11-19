@@ -8,6 +8,7 @@ HybridStrategist統合版 - Fast-Lane即時応答 + Slow-Lane非同期更新
     streamlit run frontend/streamlit_app.py
 """
 
+import sys
 import json
 import asyncio
 import time
@@ -16,6 +17,11 @@ import plotly.graph_objects as go
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Callable
 from concurrent.futures import ThreadPoolExecutor
+
+# プロジェクトルートをPythonパスに追加
+project_root = Path(__file__).parent.parent
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 # ページ設定
 st.set_page_config(
@@ -71,6 +77,56 @@ def load_sample_data() -> Dict[str, Any]:
         with open(sample_path, "r", encoding="utf-8") as f:
             return json.load(f)
     return {}
+
+
+def convert_sample_to_battle_state(battle_log: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    sample-data.jsonのbattleLog形式をHybridStrategist用のp1/p2形式に変換
+    """
+    state = battle_log.get("state", {})
+    player_a_state = state.get("A", {})
+    player_b_state = state.get("B", {})
+    field_state = state.get("field", {})
+    
+    def convert_pokemon(poke: Dict[str, Any]) -> Dict[str, Any]:
+        """個別ポケモンの変換"""
+        hp_value = poke.get("hp", 100)
+        # HPが文字列（例: "54%"）の場合はパース
+        if isinstance(hp_value, str) and "%" in hp_value:
+            hp_value = int(hp_value.replace("%", ""))
+        
+        return {
+            "species": poke.get("name", "Unknown"),
+            "level": 50,
+            "hp": hp_value,
+            "maxhp": 100,
+            "status": poke.get("status"),
+            "ability": "Unknown",  # サンプルデータには含まれていない
+            "item": poke.get("item", ""),
+            "moves": poke.get("moves", []),
+            "boosts": poke.get("boosts", {})
+        }
+    
+    # p1/p2形式に変換
+    return {
+        "turn": battle_log.get("currentTurn", 1),
+        "p1": {
+            "name": player_a_state.get("name", "Player A"),
+            "active": [convert_pokemon(p) for p in player_a_state.get("active", [])],
+            "reserves": [{"species": name, "hp": 100, "maxhp": 100, "status": None} 
+                        for name in player_a_state.get("reserves", [])]
+        },
+        "p2": {
+            "name": player_b_state.get("name", "Player B"),
+            "active": [convert_pokemon(p) for p in player_b_state.get("active", [])],
+            "reserves": [{"species": name, "hp": 100, "maxhp": 100, "status": None} 
+                        for name in player_b_state.get("reserves", [])]
+        },
+        "weather": field_state.get("weather"),
+        "terrain": field_state.get("terrain"),
+        "pseudo_weathers": [],
+        "side_conditions": {"p1": [], "p2": []}
+    }
 
 
 def initialize_hybrid_strategist():
@@ -166,6 +222,35 @@ def call_hybrid_prediction(battle_state: Dict[str, Any], use_fast_only: bool = F
     if not strategist:
         return {}
     
+    def action_to_dict(action):
+        """TurnActionオブジェクトを辞書に変換"""
+        if action is None:
+            return None
+        
+        # TurnActionの場合
+        if hasattr(action, 'player_a_actions') and hasattr(action, 'player_b_actions'):
+            return {
+                "player_a_actions": [
+                    {
+                        "type": a.type,
+                        "pokemon_slot": a.pokemon_slot,
+                        "move_name": a.move_name,
+                        "target_slot": a.target_slot,
+                    } for a in action.player_a_actions
+                ] if action.player_a_actions else [],
+                "player_b_actions": [
+                    {
+                        "type": a.type,
+                        "pokemon_slot": a.pokemon_slot,
+                        "move_name": a.move_name,
+                        "target_slot": a.target_slot,
+                    } for a in action.player_b_actions
+                ] if action.player_b_actions else []
+            }
+        
+        # 通常のActionの場合
+        return str(action)
+    
     try:
         # 辞書からBattleStateオブジェクトに変換
         battle_state_obj = dict_to_battle_state(battle_state)
@@ -177,7 +262,7 @@ def call_hybrid_prediction(battle_state: Dict[str, Any], use_fast_only: bool = F
             "fast": {
                 "win_rate": fast_result.p1_win_rate,
                 "confidence": fast_result.confidence,
-                "recommended_action": fast_result.recommended_action.to_dict() if fast_result.recommended_action else None,
+                "recommended_action": action_to_dict(fast_result.recommended_action),
                 "inference_time_ms": fast_result.inference_time_ms,
                 "source": fast_result.source
             }
@@ -190,7 +275,7 @@ def call_hybrid_prediction(battle_state: Dict[str, Any], use_fast_only: bool = F
             result["slow"] = {
                 "win_rate": slow_result.p1_win_rate,
                 "confidence": slow_result.confidence,
-                "recommended_action": slow_result.recommended_action.to_dict() if slow_result.recommended_action else None,
+                "recommended_action": action_to_dict(slow_result.recommended_action),
                 "inference_time_ms": slow_result.inference_time_ms,
                 "source": slow_result.source
             }
@@ -351,11 +436,24 @@ def main():
         if st.button("📂 サンプルデータを読み込む", use_container_width=True):
             sample = load_sample_data()
             if sample:
+                # HybridStrategist用に簡易バトルステートを作成
+                battle_log_original = sample.get("battleLog", {})
+                battle_state_for_hybrid = convert_sample_to_battle_state(battle_log_original)
+                
                 st.session_state["team_a"] = sample.get("teamA", "")
                 st.session_state["team_b"] = sample.get("teamB", "")
-                st.session_state["battle_log"] = json.dumps(sample.get("battleLog", {}), indent=2, ensure_ascii=False)
+                st.session_state["battle_log"] = json.dumps(battle_state_for_hybrid, indent=2, ensure_ascii=False)
                 st.session_state["estimated_evs"] = json.dumps(sample.get("estimatedEvs", {}), indent=2, ensure_ascii=False)
-                st.success("✅ サンプルデータを読み込みました")
+                
+                # 入力フィールドのkeyに直接設定
+                st.session_state["team_a_input"] = sample.get("teamA", "")
+                st.session_state["team_b_input"] = sample.get("teamB", "")
+                st.session_state["battle_log_input"] = json.dumps(battle_state_for_hybrid, indent=2, ensure_ascii=False)
+                st.session_state["estimated_evs_input"] = json.dumps(sample.get("estimatedEvs", {}), indent=2, ensure_ascii=False)
+                
+                st.success("✅ サンプルデータを読み込みました！「📝 入力データ」タブで確認してください")
+                st.info("💡 ⚡Fast-Lane評価 または 🎯統合評価ボタンを押して予測を実行してください")
+                st.rerun()
             else:
                 st.error("サンプルデータが見つかりません")
         
