@@ -28,7 +28,7 @@ import asyncio
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 
 from predictor.core.models import ActionCandidate, BattleState
 from predictor.player.fast_strategist import FastPrediction, FastStrategist
@@ -64,6 +64,8 @@ class HybridPrediction:
     source: str  # "fast" | "slow" | "alphazero"
     policy_probs: Optional[Dict] = None
     value_estimate: Optional[float] = None
+    explanation: Optional[str] = None
+    alternatives: Optional[List[Dict[str, Any]]] = None
 
 
 class HybridStrategist:
@@ -197,7 +199,9 @@ class HybridStrategist:
             recommended_action=mcts_result["action"],
             confidence=0.9,  # Slow-Laneは高信頼度
             inference_time_ms=elapsed_ms,
-            source="slow"
+            source="slow",
+            explanation=mcts_result.get("explanation"),
+            alternatives=mcts_result.get("alternatives")
         )
     
     async def predict_ultimate(
@@ -272,7 +276,9 @@ class HybridStrategist:
             recommended_action=mcts_result["action"],
             confidence=0.9,
             inference_time_ms=elapsed_ms,
-            source="slow"
+            source="slow",
+            explanation=mcts_result.get("explanation"),
+            alternatives=mcts_result.get("alternatives")
         )
         
         return fast_result, slow_result
@@ -289,13 +295,59 @@ class HybridStrategist:
         """
         result = self.mcts_strategist.predict_win_rate(battle_state)
         
-        # P1 (player_a) の勝率を返す
         p1_win_rate = result.get("player_a_win_rate", 0.0)
         optimal_action = result.get("optimal_action")
+        action_win_rates = result.get("action_win_rates", {})
+        legal_actions = result.get("legal_actions", [])
+        
+        # 説明文と代替案を生成
+        explanation = f"Win rate: {p1_win_rate:.1%}"
+        alternatives = []
+        
+        # アクションごとの勝率をリスト化
+        for action_idx, rate in action_win_rates.items():
+            description = f"Action {action_idx}"
+            if 0 <= action_idx < len(legal_actions):
+                action = legal_actions[action_idx]
+                # TurnAction の内容を文字列化
+                acts_str = []
+                # player_a_actions は list[Action]
+                # Action は dataclass だが、辞書ではなくオブジェクトとして返ってくる可能性がある
+                # MonteCarloStrategist は同じプロセス内ならオブジェクト
+                for act in action.player_a_actions:
+                    if act.type == "move":
+                        acts_str.append(f"{act.move_name} (slot {act.pokemon_slot}->{act.target_slot})")
+                    elif act.type == "switch":
+                        acts_str.append(f"Switch to {act.switch_to}")
+                    elif act.type == "terastallize":
+                        acts_str.append(f"Tera {act.tera_type}")
+                description = ", ".join(acts_str)
+
+            alternatives.append({
+                "action_idx": action_idx,
+                "win_rate": rate,
+                "description": description
+            })
+            
+        # ソート
+        alternatives.sort(key=lambda x: x["win_rate"], reverse=True)
+        
+        if optimal_action:
+             # TurnAction の内容を文字列で説明
+             acts_str = []
+             for act in optimal_action.player_a_actions:
+                 if act.type == "move":
+                     acts_str.append(f"{act.move_name} (slot {act.pokemon_slot}->{act.target_slot})")
+                 elif act.type == "switch":
+                     acts_str.append(f"Switch to {act.switch_to}")
+             
+             explanation = f"Selected: {', '.join(acts_str)}. Win rate: {p1_win_rate:.1%}."
         
         return {
             "win_rate": p1_win_rate,
-            "action": optimal_action
+            "action": optimal_action,
+            "explanation": explanation,
+            "alternatives": alternatives
         }
     
     def _run_alphazero(self, battle_state: BattleState) -> Dict:

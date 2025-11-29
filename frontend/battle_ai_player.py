@@ -18,12 +18,22 @@ import asyncio
 import json
 from typing import Any, Dict, Optional
 
+
+from predictor.player.hybrid_strategist import HybridStrategist
+from predictor.core.models import (
+    BattleState,
+    PlayerState,
+    PokemonBattleState,
+    ActionCandidate
+)
+
 try:
     from poke_env.player import Player
     from poke_env.environment.battle import Battle
     from poke_env.environment.move import Move
     from poke_env.environment.pokemon import Pokemon
     from poke_env.server_configuration import LocalhostServerConfiguration
+    from poke_env.environment.side_condition import SideCondition
 
     POKE_ENV_AVAILABLE = True
 except ImportError:
@@ -64,13 +74,18 @@ class AIPlayer(Player):
             team=team,
         )
         self.move_count = 0
+        
+        # HybridStrategistの初期化
+        # モデルパスは適宜調整。存在しない場合はFast-Laneはロードされないが、MCTSは動作する。
+        self.strategist = HybridStrategist(
+            fast_model_path="models/fast_lane.pkl",
+            mcts_rollouts=500,  # 応答速度重視で少し減らす
+            mcts_max_turns=20
+        )
 
     def choose_move(self, battle: Battle):
         """
         バトル状態を分析してAIが次の手を選択。
-        
-        ここで predictor.evaluate_position を呼び出し、
-        推奨される行動を取得します。
         """
         self.move_count += 1
 
@@ -83,26 +98,128 @@ class AIPlayer(Player):
         active = battle.active_pokemon
         if active:
             print(f"\nアクティブ: {active.species} (HP: {active.current_hp}/{active.max_hp})")
-            print(f"状態: {active.status if active.status else '正常'}")
+        
+        # BattleStateに変換
+        battle_state = self._convert_battle_to_state(battle)
+        
+        # HybridStrategistで予測 (同期実行)
+        # predict_bothを使うことで、MCTSの結果(説明付き)を取得できる
+        _, slow_result = self.strategist.predict_both(battle_state)
+        
+        # 説明を表示
+        print("\n🤖 AIの思考:")
+        if slow_result.explanation:
+            print(f"  結論: {slow_result.explanation}")
+        
+        if slow_result.alternatives:
+            print("  検討した選択肢:")
+            for alt in slow_result.alternatives:
+                print(f"    - {alt.get('description', 'Unknown')}: 勝率 {alt.get('win_rate', 0.0):.1%}")
 
-        # 利用可能な行動を表示
-        print("\n利用可能な行動:")
-        available_moves = battle.available_moves
-        available_switches = battle.available_switches
+        # 推奨行動を実行
+        recommended = slow_result.recommended_action
+        if recommended:
+            # ActionCandidate を poke-env の Order に変換
+            # VGC (ダブル) の場合、recommended は TurnAction (2体分) の可能性があるが、
+            # HybridStrategist の戻り値は ActionCandidate (1体分) の場合と TurnAction の場合がある。
+            # 今回の改修で MonteCarloStrategist は TurnAction を返すが、
+            # HybridStrategist._select_quick_action は ActionCandidate を返す。
+            # predict_precise (MCTS) は TurnAction を返す。
+            
+            # TurnAction (MCTS result) の場合
+            if hasattr(recommended, "player_a_actions"):
+                # 自分の行動 (player_a) を取得
+                # poke-env の choose_move は「次の1手」を返す必要がある。
+                # ダブルバトルの場合、poke-env はどう扱う？
+                # Gen9 Random Battle はシングルなので、1体分で良いはず。
+                # しかし VGC はダブル。
+                # ここではフォーマットが gen9randombattle (シングル) なので、
+                # TurnAction の最初の行動を採用する。
+                
+                action = recommended.player_a_actions[0]
+                if action.type == "move":
+                    # 技を探す
+                    for move in battle.available_moves:
+                        if move.id == action.move_name or move.entry_name == action.move_name: # IDマッチングは要調整
+                            # target 変換
+                            return self.create_order(move)
+                    # 名前で一致しなければindexで... (危険だが)
+                    # 簡易実装: 利用可能な技の中で一番近いもの、あるいはランダム
+                    pass
+                elif action.type == "switch":
+                    for pokemon in battle.available_switches:
+                        if pokemon.species == action.switch_to:
+                            return self.create_order(pokemon)
+            
+            # ActionCandidate の場合 (Fast-Lane fallback)
+            elif isinstance(recommended, ActionCandidate):
+                # ...
+                pass
 
-        for i, move in enumerate(available_moves):
-            print(f"  {i+1}. {move.id} (威力: {move.base_power}, PP: {move.current_pp}/{move.max_pp})")
+        # フォールバック: ヒューリスティック
+        print("⚠️ 推奨行動を実行できませんでした。ヒューリスティックを使用します。")
+        return self._choose_action_heuristic(battle)
 
-        for i, pokemon in enumerate(available_switches):
-            print(f"  S{i+1}. 交代 → {pokemon.species} (HP: {pokemon.current_hp}/{pokemon.max_hp})")
+    def _convert_battle_to_state(self, battle: Battle) -> BattleState:
+        """poke-env Battle -> BattleState 変換"""
+        
+        # Player A (自分)
+        player_a = PlayerState(
+            name=self.username,
+            active=[self._convert_pokemon(battle.active_pokemon, slot=0)], # シングル想定
+            reserves=[p.species for p in battle.available_switches]
+        )
+        
+        # Player B (相手)
+        player_b = PlayerState(
+            name=battle.opponent_username or "Opponent",
+            active=[self._convert_pokemon(battle.opponent_active_pokemon, slot=0)],
+            reserves=[p.species for p in battle.opponent_team.values() if not p.active] # 情報不完全
+        )
+        
+        # Legal Actions
+        # poke-env の available_moves / switches を ActionCandidate に変換
+        candidates = []
+        for move in battle.available_moves:
+            candidates.append(ActionCandidate(
+                actor=battle.active_pokemon.species,
+                slot=0,
+                move=move.id,
+                target=None # シングルならNone
+            ))
+        for pokemon in battle.available_switches:
+            candidates.append(ActionCandidate(
+                actor=battle.active_pokemon.species,
+                slot=0,
+                move="switch", # 便宜上
+                target=None,
+                metadata={"switch_to": pokemon.species}
+            ))
+            
+        legal_actions = {"A": candidates, "B": []} # 相手の行動は不明
+        
+        return BattleState(
+            player_a=player_a,
+            player_b=player_b,
+            turn=battle.turn,
+            legal_actions=legal_actions
+        )
 
-        # TODO: ここで predictor.evaluate_position を呼び出す
-        # 現状は簡易的なヒューリスティックで行動を選択
-        chosen_action = self._choose_action_heuristic(battle)
+    def _convert_pokemon(self, pokemon: Optional[Pokemon], slot: int) -> PokemonBattleState:
+        if not pokemon:
+            return PokemonBattleState(name="Empty", hp_fraction=0.0)
+            
+        return PokemonBattleState(
+            name=pokemon.species,
+            hp_fraction=pokemon.current_hp_fraction,
+            status=pokemon.status.name if pokemon.status else None,
+            species=pokemon.species,
+            slot=slot,
+            moves=list(pokemon.moves.keys()),
+            item=pokemon.item,
+            ability=pokemon.ability
+        )
 
-        print(f"\n選択した行動: {chosen_action}")
-
-        return chosen_action
 
     def _choose_action_heuristic(self, battle: Battle):
         """

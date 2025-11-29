@@ -202,7 +202,8 @@ class MonteCarloStrategist:
             "action_win_rates": action_win_rates,
             "total_rollouts": self.n_rollouts,
             "avg_turns_per_rollout": total_turns / self.n_rollouts if self.n_rollouts > 0 else 0,
-            "action_stats": action_stats
+            "action_stats": action_stats,
+            "legal_actions": legal_actions
         }
     
     def _simulate_battle(
