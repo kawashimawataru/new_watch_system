@@ -1,3 +1,195 @@
+## ForAgentRead — 最終まとめ（エージェント向け）
+
+このファイルは、プロジェクト「new_watch_game_system」の最終まとめと開発者（エージェント含む）向けの実行ガイドです。
+主に日本語で記載しています。
+
+---
+
+## 概要
+
+- プロジェクト名: new_watch_game_system
+- 目的: Pokémon Showdown のリプレイ等のデータを用いて戦略モデル（HybridStrategist）を構築し、Fast-Lane（LightGBM）、Slow-Lane（重めの特徴ベース）、AlphaZero-Lane（Policy/Value ネットワーク + MCTS）を統合する。
+- 現在: リプレイパース・BC データ生成・PyTorch による Policy/Value ネットワーク実装・LightGBM による Fast-Lane 実装・HybridStrategist の統合・統合テストを完了。
+
+モデルや主要成果物の配置:
+
+- 学習済みポリシーネットワーク: `models/policy_value_v1.pt`（プロジェクトルートまたは `models/`）
+- Fast-Lane モデル: `models/fast_lane.pkl`
+- トレーニングデータ・中間ファイル: `data/` 以下（例: `expert_trajectories.json`, `training_features.csv`）
+
+---
+
+## 🆕 最新サマリ（2025-11-19）
+
+### 主要アップデート
+
+- **AlphaZero-Lane（Phase 2-5）完了**: `docs/251119_week4_phase2-5_complete.md` に記載の通り、3545 サンプルで学習した `models/policy_value_v1.pt` を `predictor/player/alphazero_strategist.py`・`predictor/player/hybrid_strategist.py` に統合し、`tests/test_hybrid_strategist.py` で 3 レーン構成を検証。
+- **React UI への完全移行**: Streamlit ベースの `frontend/streamlit_app.py` を廃止し、`frontend/web/` の React（Vite）クライアントをメイン UI として運用。Fast / Slow / AlphaZero の 3 レーン可視化に加えて、ヒーロー・ステップガイド・勝率スコアカードなど視覚的な誘導を実装し、Python は ML 推論 API のみで使用する。
+- **Hybrid API ブリッジ**: `/evaluate-position` に `include_hybrid=true` を指定すると `hybridLanes` フィールドが返り、Fast-Lane/Slow-Lane/AlphaZero の勝率・推奨行動・実行時間が React UI のスコアボードと同期表示される。
+- **データ／評価アーティファクト整理**: 高レート 508 件を含む 760 件のリプレイと 80 件の Smogon 統計を `data/replays/`・`data/smogon_stats/` に配置（詳細は `docs/251119_phase1_3_data_collection_report.md`）。AlphaZero の評価結果を `data/evaluation/`、Fast-Lane 特徴量を `data/training/`・`data/training_features.csv` に保存し、`scripts/evaluate_alphazero.py`・`scripts/quick_test_model.py` で再現できる状態。
+
+### テスト / 実行状況
+
+- `pytest tests/test_hybrid_strategist.py -v` を想定テストコマンドとして継続運用（`pytest-asyncio` 必須）。`CURRENT_STATUS.md` 時点でローカル実行済み。
+- フロントエンドは `frontend/web/`（React/Vite）で提供し、`npm install && npm run dev` で起動。環境変数 `VITE_PREDICTOR_URL` を設定し、Python サイドの推論 API と通信する。バックエンドを `uvicorn predictor.api.server:app --reload` で起動し、`include_hybrid=true` で 3 レーンが描画される。
+
+### 未解決の課題 / 次アクション
+
+1. React 側で `convert_sample_to_battle_state()`（utility 化予定）に slot/HP ベースの disambiguation を実装。
+2. AlphaZero 推論 API を非同期化し、長時間 rollouts の進捗表示を React UI に追加。
+3. `ActionCandidate` に target 等のメタ情報を拡充し、推奨行動の説明力を高める。
+4. React/Next.js CI（Lint/Build）と Docker/Vercel デプロイ手順を docs に追記。
+
+### 参考ドキュメント
+
+- `CURRENT_STATUS.md` – 直近スナップショット（テスト状況 / TODO）。
+- `docs/251119_week4_phase2-5_complete.md` – AlphaZero 統合レポート。
+- `docs/251119_phase1_3_data_collection_report.md` – Phase 1.3 データ収集まとめ。
+- `docs/PBS-AI_Ultimate_Master_Plan.md` – 全体計画と進捗バー。
+
+---
+
+## 重要ファイル構成（抜粋）
+
+- `predictor/player/` : 各種ストラテジスト（`alphazero_strategist.py`, `hybrid_strategist.py`, `policy_value_network_pytorch.py`）
+- `scripts/` : データ生成・特徴抽出・学習スクリプト（`parse_replay_to_training_data.py`, `extract_features.py`, `train_fast_lane.py`など）
+- `frontend/web/` : React（Vite/Next.js）ベースの UI。Python 推論 API と HTTP 経由で連携。
+- `tests/` : 単体・統合テスト（`test_hybrid_strategist.py` など）
+- `docs/` : 設計や統合手順のドキュメント
+
+---
+
+## 開発環境セットアップ（ローカル・macOS / zsh 想定）
+
+1. Python 仮想環境の作成（推奨: `.venv`）
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+```
+
+2. 必要パッケージのインストール
+
+（requirements.txt がある場合）
+
+```bash
+pip install -r requirements.txt
+```
+
+主要に使用するパッケージ:
+
+- torch（PyTorch）
+- lightgbm
+- pytest, pytest-asyncio
+- React / Next.js / Vite（フロントエンド）
+
+3. テスト実行
+
+```bash
+pytest tests/test_hybrid_strategist.py -v
+```
+
+テストは `pytest-asyncio` を使っているため、プラグインが必要です（インストール済みであることを確認）。
+
+---
+
+## 主要な実行手順（開発時）
+
+- React UI を起動してハイブリッド戦略を可視化:
+
+```bash
+cd frontend/web
+npm install
+VITE_PREDICTOR_URL=http://localhost:8000/evaluate-position npm run dev
+```
+
+- 迅速なモデル確認:
+
+```bash
+python scripts/quick_test_model.py
+```
+
+---
+
+## モデル学習・再現（簡易メモ）
+
+1. リプレイ -> 転移データ生成
+
+```bash
+python scripts/parse_replay_to_training_data.py --input data/showdown --output data/expert_trajectories.json
+```
+
+2. 特徴抽出（Fast-Lane 用）
+
+```bash
+python scripts/extract_features.py --input data/expert_trajectories.json --output data/training_features.csv
+```
+
+3. Fast-Lane 学習
+
+```bash
+python scripts/train_fast_lane.py --input data/training_features.csv --output models/fast_lane.pkl
+```
+
+4. Policy/Value ネットワーク学習（PyTorch）
+
+```bash
+python predictor/player/policy_value_network_pytorch.py --train --data data/bc_training_data.pt --out models/policy_value_v1.pt
+```
+
+（各スクリプトは実行時のオプション名に依存するため、ヘルプ `--help` を確認してください）
+
+---
+
+## テストと品質ゲート
+
+- 変更を加えたらまず `pytest` を走らせること。
+- 非同期テストがあるため `pytest-asyncio` を必ず入れてください。
+- 重要なテスト: `tests/test_hybrid_strategist.py`（Fast/Slow/AlphaZero の統合動作を確認）
+
+---
+
+## フロントエンド UI（React）
+
+- 現状: `frontend/web/` に React ベースの UI を集約。Vite Dev Server で動作し、Fast / Slow / AlphaZero の 3 レーン表示と rollouts 調整 UI を提供。
+- `/evaluate-position` に `include_hybrid=true` を付与して呼び出すと `hybridLanes` が返り、UI のスコアボードで Fast-Lane / Slow-Lane / AlphaZero の勝率・信頼度・推奨行動・推論時間を視覚化できる。
+- 次の作業（優先）: Next.js への移行（SSR/SSG や API Routes の活用）、AlphaZero 非同期表示、ActionCandidate メタ情報拡充、UI/UX 改善。
+
+---
+
+## 本番デプロイの注意点
+
+- モデルファイル（特に `policy_value_v1.pt`）はサイズが大きくなる可能性があるため、別ストレージ（S3 等）に置き、起動時に取得するのが望ましい。
+- 推論環境では GPU/MPS の有無で挙動が変わるため、デグレ検出のための簡易ベンチ（`scripts/quick_test_model.py` 等）を CI に組み込むこと。
+
+---
+
+## 既知の課題 / リスク
+
+- Self-Play によるデータ増強は未完了（現状はエキスパートデータ中心）。
+- AlphaZero の MCTS は計算負荷が高く、レイテンシ要件次第では Fast/Slow の補助的利用が必須。
+- Streamlit の UI はデプロイ時に認証やリソース制限を考慮する必要あり。
+
+---
+
+## 今後の推奨ステップ（短期）
+
+1. React/Next.js UI の機能拡張（AlphaZero レーン非同期化、ActionCandidate 説明強化）
+2. Self-Play 用ジョブを小規模で起動してデータを収集
+3. CI に `pytest` と `scripts/quick_test_model.py`、およびフロントエンド Lint/Build を組み込み（モデルロード検証）
+
+---
+
+## 連絡先・参照
+
+- 開発者: kawashimawataru（リポジトリ所有者）
+- 主要ドキュメント: `docs/` 下の各ファイル（`showdown_integration_plan.md` など）
+
+---
+
+最終更新: 2025-11-19
+
 # For Agent Read: プロジェクト概要と作業ガイドライン
 
 **最終更新**: 2025 年 11 月 19 日  
@@ -18,8 +210,8 @@ new_watch_game_system/
 │   ├── data/              # Data Loaders (Showdown, Smogon)
 │   └── player/            # AI Player実装
 ├── frontend/              # UIと入出力
-│   ├── streamlit_app.py  # 可視化MVP (localhost:8501)
-│   └── web/              # 将来のWebフロントエンド
+│   ├── battle_ai_player.py  # CLI/操作系
+│   └── web/              # React/Next.js フロントエンド
 ├── smogon-calc-bridge/    # Node.js ↔ Python ブリッジ
 ├── pokemon-showdown/      # Showdownサーバー (localhost:8000)
 ├── data/                  # データストレージ
@@ -363,7 +555,7 @@ grep -A 10 "Phase 1:" docs/PBS-AI_Ultimate_Master_Plan.md
 
 - **マスタープラン**: `docs/PBS-AI_Ultimate_Master_Plan.md`
 - **現在のタスク**: TODO リスト参照
-- **Streamlit 起動**: `streamlit run frontend/streamlit_app.py`
+- **React UI 起動**: `cd frontend/web && npm run dev`
 - **Showdown 起動**: `cd pokemon-showdown && node pokemon-showdown start`
 - **テスト実行**: `pytest tests/`
 

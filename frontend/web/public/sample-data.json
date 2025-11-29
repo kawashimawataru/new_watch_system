@@ -1,452 +1,136 @@
 {
-  "teamA": "Flutter Mane @ Focus Sash\nAbility: Protosynthesis\nLevel: 50\nTera Type: Fairy\nIVs: 0 Atk\nTimid Nature\n- Moonblast\n- Shadow Ball\n- Dazzling Gleam\n- Protect\n\nArcanine @ Safety Goggles\nAbility: Intimidate\nLevel: 50\nTera Type: Grass\nAdamant Nature\n- Flare Blitz\n- Extreme Speed\n- Howl\n- Protect\n\nIron Hands @ Assault Vest\nAbility: Quark Drive\nLevel: 50\nTera Type: Water\nAdamant Nature\n- Fake Out\n- Volt Switch\n- Drain Punch\n- Wild Charge\n\nFarigiraf @ Sitrus Berry\nAbility: Armor Tail\nLevel: 50\nTera Type: Fairy\nModest Nature\n- Psychic\n- Dazzling Gleam\n- Trick Room\n- Helping Hand",
-  "teamB": "Iron Bundle @ Booster Energy\nAbility: Quark Drive\nLevel: 50\nTera Type: Water\nModest Nature\n- Hydro Pump\n- Freeze-Dry\n- Icy Wind\n- Protect\n\nAmoonguss @ Sitrus Berry\nAbility: Regenerator\nLevel: 50\nTera Type: Water\nRelaxed Nature\n- Spore\n- Rage Powder\n- Pollen Puff\n- Protect\n\nGholdengo @ Metal Coat\nAbility: Good as Gold\nLevel: 50\nTera Type: Steel\nTimid Nature\n- Make It Rain\n- Shadow Ball\n- Nasty Plot\n- Protect\n\nPalafin @ Mystic Water\nAbility: Zero to Hero\nLevel: 50\nTera Type: Water\nJolly Nature\n- Flip Turn\n- Jet Punch\n- Wave Crash\n- Protect",
-  "battleLog": {
-    "currentTurn": 5,
-    "state": {
-      "A": {
-        "name": "Player A",
-        "active": [
-          {
-            "name": "Flutter Mane",
-            "hp": 72,
-            "status": null,
-            "boosts": {
-              "spe": 1
-            },
-            "moves": [
-              "Moonblast",
-              "Shadow Ball",
-              "Dazzling Gleam",
-              "Protect"
-            ],
-            "item": "Focus Sash",
-            "teraType": "Fairy"
-          },
-          {
-            "name": "Arcanine",
-            "hp": 48,
-            "status": null,
-            "boosts": {
-              "atk": 1
-            },
-            "moves": [
-              "Flare Blitz",
-              "Extreme Speed",
-              "Howl",
-              "Protect"
-            ],
-            "item": "Safety Goggles",
-            "teraType": "Grass"
-          }
-        ],
-        "reserves": [
-          "Iron Hands",
-          "Farigiraf"
-        ]
-      },
-      "B": {
-        "name": "Player B",
-        "active": [
-          {
-            "name": "Iron Bundle",
-            "hp": "54%",
-            "status": null,
-            "boosts": {
-              "spe": 1
-            },
-            "moves": [
-              "Hydro Pump",
-              "Freeze-Dry",
-              "Icy Wind",
-              "Protect"
-            ],
-            "item": "Booster Energy",
-            "teraType": "Water"
-          },
-          {
-            "name": "Amoonguss",
-            "hp": 80,
-            "status": "slp",
-            "boosts": {},
-            "moves": [
-              "Spore",
-              "Rage Powder",
-              "Pollen Puff",
-              "Protect"
-            ],
-            "item": "Sitrus Berry",
-            "teraType": "Water"
-          }
-        ],
-        "reserves": [
-          "Gholdengo",
-          "Palafin"
-        ]
-      },
-      "field": {
-        "weather": "rain",
-        "terrain": "grassy",
-        "room": null
-      }
-    },
-    "legalActions": {
-      "A": [
+  "battle_id": "gen9vgc2025regj-2483421645",
+  "turn": 6,
+  "teams": {
+    "A": {
+      "pokemon": [
         {
-          "pokemon": "Flutter Mane",
-          "slot": 0,
-          "move": "Protect",
-          "target": "self",
-          "tags": [
-            "protect"
-          ],
-          "priority": 4
-        },
-        {
-          "pokemon": "Flutter Mane",
-          "slot": 0,
-          "move": "Moonblast",
-          "target": "B_slot1",
-          "tags": [
-            "spread"
-          ],
-          "metadata": {
-            "is_stab": true,
-            "is_super_effective": true
-          }
-        },
-        {
-          "pokemon": "Arcanine",
-          "slot": 1,
-          "move": "Flare Blitz",
-          "target": "B_slot2",
-          "metadata": {
-            "is_stab": true
+          "species": "Calyrex-Shadow",
+          "ability": "Grim Neigh",
+          "item": "Life Orb",
+          "nature": "Timid",
+          "evs": {
+            "hp": 0,
+            "atk": 0,
+            "def": 0,
+            "spa": 252,
+            "spd": 4,
+            "spe": 252
           },
-          "tags": [
-            "pivot"
+          "moves": [
+            "Astral Barrage",
+            "Psyshock",
+            "Nasty Plot",
+            "Protect"
           ]
         },
         {
-          "pokemon": "Arcanine",
-          "slot": 1,
-          "move": "Howl",
-          "target": "team",
-          "tags": [
-            "boost"
-          ]
-        }
-      ],
-      "B": [
-        {
-          "pokemon": "Iron Bundle",
-          "slot": 0,
-          "move": "Hydro Pump",
-          "target": "A_slot2",
-          "metadata": {
-            "is_super_effective": true
-          }
-        },
-        {
-          "pokemon": "Iron Bundle",
-          "slot": 0,
-          "move": "Icy Wind",
-          "target": "spread",
-          "tags": [
-            "speed_control",
-            "spread"
-          ]
-        },
-        {
-          "pokemon": "Amoonguss",
-          "slot": 1,
-          "move": "Rage Powder",
-          "target": "self",
-          "tags": [
-            "redirection"
+          "species": "Koraidon",
+          "ability": "Orichalcum Pulse",
+          "item": "Assault Vest",
+          "nature": "Adamant",
+          "evs": {
+            "hp": 252,
+            "atk": 252,
+            "def": 0,
+            "spa": 0,
+            "spd": 4,
+            "spe": 0
+          },
+          "moves": [
+            "Collision Course",
+            "Flare Blitz",
+            "Dragon Claw",
+            "Protect"
           ]
         }
       ]
     },
-    "turns": [
-      {
-        "number": 1,
-        "events": [
-          {
-            "type": "move",
-            "player": "A",
-            "pokemon": "Flutter Mane",
-            "move": "Dazzling Gleam",
-            "targetPlayer": "B",
-            "targetPokemon": "Iron Bundle",
-            "damagePercent": 32,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 205
+    "B": {
+      "pokemon": [
+        {
+          "species": "Zamazenta-Crowned",
+          "ability": "Dauntless Shield",
+          "item": "Leftovers",
+          "nature": "Jolly",
+          "evs": {
+            "hp": 252,
+            "atk": 252,
+            "def": 0,
+            "spa": 0,
+            "spd": 4,
+            "spe": 0
           },
-          {
-            "type": "move",
-            "player": "A",
-            "pokemon": "Flutter Mane",
-            "move": "Dazzling Gleam",
-            "targetPlayer": "B",
-            "targetPokemon": "Gholdengo",
-            "damagePercent": 18,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 205
+          "moves": [
+            "Behemoth Bash",
+            "Close Combat",
+            "Heavy Slam",
+            "Protect"
+          ]
+        },
+        {
+          "species": "Grimmsnarl",
+          "ability": "Prankster",
+          "item": "Light Clay",
+          "nature": "Careful",
+          "evs": {
+            "hp": 252,
+            "atk": 4,
+            "def": 0,
+            "spa": 0,
+            "spd": 252,
+            "spe": 0
           },
-          {
-            "type": "move",
-            "player": "B",
-            "pokemon": "Iron Bundle",
-            "move": "Icy Wind",
-            "targetPlayer": "A",
-            "targetPokemon": "Flutter Mane",
-            "damagePercent": 20,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 204
-          },
-          {
-            "type": "move",
-            "player": "B",
-            "pokemon": "Iron Bundle",
-            "move": "Icy Wind",
-            "targetPlayer": "A",
-            "targetPokemon": "Iron Hands",
-            "damagePercent": 12,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 204
-          },
-          {
-            "type": "move",
-            "player": "A",
-            "pokemon": "Iron Hands",
-            "move": "Fake Out",
-            "targetPlayer": "B",
-            "targetPokemon": "Gholdengo",
-            "damagePercent": 8,
-            "priorityResolved": 4,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 90
-          }
-        ]
-      },
-      {
-        "number": 2,
-        "events": [
-          {
-            "type": "switch",
-            "player": "B",
-            "pokemon": "Gholdengo",
-            "text": "Gholdengo を Amoonguss に交代"
-          },
-          {
-            "type": "move",
-            "player": "A",
-            "pokemon": "Flutter Mane",
-            "move": "Moonblast",
-            "targetPlayer": "B",
-            "targetPokemon": "Iron Bundle",
-            "damagePercent": 40,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 205
-          },
-          {
-            "type": "move",
-            "player": "B",
-            "pokemon": "Iron Bundle",
-            "move": "Freeze-Dry",
-            "targetPlayer": "A",
-            "targetPokemon": "Flutter Mane",
-            "damagePercent": 35,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 204
-          },
-          {
-            "type": "move",
-            "player": "A",
-            "pokemon": "Iron Hands",
-            "move": "Volt Switch",
-            "targetPlayer": "B",
-            "targetPokemon": "Amoonguss",
-            "damagePercent": 22,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 70
-          },
-          {
-            "type": "switch",
-            "player": "A",
-            "pokemon": "Iron Hands",
-            "text": "Iron Hands は Arcanine に交代"
-          }
-        ]
-      },
-      {
-        "number": 3,
-        "events": [
-          {
-            "type": "move",
-            "player": "A",
-            "pokemon": "Arcanine",
-            "move": "Howl",
-            "targetPlayer": "A",
-            "targetPokemon": "team",
-            "damagePercent": 0,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 135
-          },
-          {
-            "type": "move",
-            "player": "B",
-            "pokemon": "Amoonguss",
-            "move": "Rage Powder",
-            "targetPlayer": "B",
-            "targetPokemon": "self",
-            "damagePercent": 0,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 30
-          },
-          {
-            "type": "move",
-            "player": "A",
-            "pokemon": "Flutter Mane",
-            "move": "Protect",
-            "targetPlayer": "A",
-            "targetPokemon": "self",
-            "damagePercent": 0,
-            "priorityResolved": 4,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 205
-          },
-          {
-            "type": "move",
-            "player": "B",
-            "pokemon": "Iron Bundle",
-            "move": "Hydro Pump",
-            "targetPlayer": "A",
-            "targetPokemon": "Flutter Mane",
-            "damagePercent": 0,
-            "priorityResolved": 0,
-            "attackerStatus": null,
-            "defenderStatus": null,
-            "speed": 204
-          }
-        ]
-      },
-      {
-        "number": 4,
-        "events": [
-          {
-            "type": "move",
-            "player": "A",
-            "pokemon": "Flutter Mane",
-            "move": "Moonblast",
-            "speed": 205,
-            "priorityResolved": 0,
-            "targetPlayer": "B",
-            "targetPokemon": "Iron Bundle",
-            "damagePercent": 55,
-            "isCrit": false,
-            "attackerStatus": null,
-            "defenderStatus": null
-          },
-          {
-            "type": "move",
-            "player": "B",
-            "pokemon": "Iron Bundle",
-            "move": "Hydro Pump",
-            "speed": 204,
-            "priorityResolved": 0,
-            "targetPlayer": "A",
-            "targetPokemon": "Arcanine",
-            "damagePercent": 80,
-            "isCrit": false,
-            "attackerStatus": null,
-            "defenderStatus": null
-          },
-          {
-            "type": "move",
-            "player": "A",
-            "pokemon": "Arcanine",
-            "move": "Flare Blitz",
-            "speed": 150,
-            "priorityResolved": 0,
-            "targetPlayer": "B",
-            "targetPokemon": "Amoonguss",
-            "damagePercent": 50,
-            "isCrit": true,
-            "attackerStatus": null,
-            "defenderStatus": "slp"
-          }
-        ]
-      }
-    ]
+          "moves": [
+            "Spirit Break",
+            "Sucker Punch",
+            "Reflect",
+            "Light Screen"
+          ]
+        }
+      ]
+    }
   },
-  "estimatedEvs": {
+  "state": {
     "A": {
-      "Flutter Mane": {
-        "hp": 0,
-        "def": 4,
-        "spa": 252,
-        "spe": 252
-      },
-      "Arcanine": {
-        "hp": 252,
-        "atk": 252,
-        "spe": 4
-      },
-      "Iron Hands": {
-        "hp": 236,
-        "atk": 196,
-        "spd": 76
-      },
-      "Farigiraf": {
-        "hp": 252,
-        "spa": 196,
-        "spd": 60
-      }
+      "active": [
+        {
+          "species": "Calyrex-Shadow",
+          "hp_percent": 1,
+          "status": null,
+          "terastallized": false,
+          "tera_type": null
+        },
+        {
+          "species": "Koraidon",
+          "hp_percent": 99,
+          "status": null,
+          "terastallized": false,
+          "tera_type": null
+        }
+      ]
     },
     "B": {
-      "Iron Bundle": {
-        "hp": 0,
-        "def": 4,
-        "spa": 252,
-        "spe": 252
-      },
-      "Amoonguss": {
-        "hp": 252,
-        "def": 124,
-        "spd": 132
-      },
-      "Gholdengo": {
-        "hp": 116,
-        "spa": 196,
-        "spd": 196
-      },
-      "Palafin": {
-        "hp": 108,
-        "atk": 196,
-        "spe": 204
-      }
+      "active": [
+        {
+          "species": "Zamazenta-Crowned",
+          "hp_percent": 100,
+          "status": "par",
+          "terastallized": true,
+          "tera_type": "Grass"
+        },
+        {
+          "species": "Grimmsnarl",
+          "hp_percent": 1,
+          "status": null,
+          "terastallized": false,
+          "tera_type": null
+        }
+      ]
+    },
+    "field": {
+      "weather": "SunnyDay",
+      "terrain": null
     }
   }
 }

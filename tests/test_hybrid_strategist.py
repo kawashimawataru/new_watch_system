@@ -264,3 +264,29 @@ class TestAsyncBehavior:
         
         # 並列実行により個別実行の3倍よりも短い時間で完了
         # (実際は並列処理のオーバーヘッドがあるため完全には3倍にはならない)
+    
+    @pytest.mark.asyncio
+    async def test_predict_ultimate_returns_alphazero_result(self, hybrid_strategist, sample_battle_state):
+        """predict_ultimate が AlphaZero結果を返すか (統合テスト)"""
+        # AlphaZeroモデルが存在する場合のみ
+        alphazero_model = Path("models/policy_value_v1.pt")
+        if not alphazero_model.exists():
+            pytest.skip("models/policy_value_v1.pt が見つかりません")
+        # AlphaZero有効化
+        hybrid_strategist.use_alphazero = True
+        hybrid_strategist.alphazero_strategist = None  # 再初期化
+        # 再初期化
+        from predictor.player.alphazero_strategist import AlphaZeroStrategist
+        hybrid_strategist.alphazero_strategist = AlphaZeroStrategist(
+            policy_value_model_path=alphazero_model,
+            mcts_rollouts=20,
+            use_bc_pretraining=True
+        )
+        result = await hybrid_strategist.predict_ultimate(sample_battle_state)
+        assert isinstance(result, HybridPrediction)
+        assert result.source == "alphazero"
+        assert 0.0 <= result.p1_win_rate <= 1.0
+        assert result.confidence == 0.95
+        assert result.inference_time_ms > 0
+        assert result.value_estimate is not None
+        print(f"\n🚀 AlphaZero-Lane: Win rate={result.p1_win_rate:.2f}, Value={result.value_estimate:.3f}, Time={result.inference_time_ms:.1f}ms")

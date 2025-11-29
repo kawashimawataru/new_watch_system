@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import copy
 import math
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,8 +44,20 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
+project_root = Path(__file__).parent.parent.parent
+sys.path.insert(0, str(project_root))
+
 from predictor.core.models import BattleState, ActionCandidate
 from predictor.player.monte_carlo_strategist import Action, TurnAction, MonteCarloStrategist
+
+try:
+    import torch
+    from predictor.player.policy_value_network_pytorch import (
+        PolicyValueNet, BattleStateEncoder
+    )
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
 
 
 @dataclass
@@ -87,50 +100,69 @@ class PolicyValueNetwork:
         dropout_rate: float = 0.3,
         weight_decay: float = 1e-4
     ):
-        """
-        Args:
-            model_path: 学習済みモデルパス (None = ランダム初期化)
-            use_bc_pretraining: Behavioral Cloning事前学習を使用するか
-            dropout_rate: Dropout率 (過学習防止)
-            weight_decay: Weight Decay係数 (正則化)
-        """
         self.model_path = model_path
         self.use_bc_pretraining = use_bc_pretraining
         self.dropout_rate = dropout_rate
         self.weight_decay = weight_decay
         
-        # Phase 1: ダミーモデル (後でPyTorchに置き換え)
         self.model = None
+        self.device = "mps" if TORCH_AVAILABLE and torch.backends.mps.is_available() else "cpu"
         
-        if model_path and Path(model_path).exists():
+        if TORCH_AVAILABLE and model_path and Path(model_path).exists():
             self._load_model(model_path)
         else:
-            self._initialize_random_model()
+            if TORCH_AVAILABLE:
+                self._initialize_random_model()
+            else:
+                print("⚠️  PyTorch not available, using dummy model")
     
     def predict(self, battle_state: BattleState) -> PolicyValueOutput:
-        """
-        現在の盤面から Policy + Value を予測
-        
-        Args:
-            battle_state: 対戦状態
-            
-        Returns:
-            PolicyValueOutput (policy probs + value estimate)
-        """
         start_time = time.perf_counter()
         
-        # Phase 1: ランダム出力 (デモ用)
-        # Phase 2: 実際のNN推論
+        if not TORCH_AVAILABLE or self.model is None:
+            return self._dummy_predict(battle_state, start_time)
         
-        # 合法手を取得
+        # Encode state
+        state_features = BattleStateEncoder.encode(battle_state)
+        state_tensor = torch.tensor(
+            state_features, dtype=torch.float32
+        ).unsqueeze(0).to(self.device)
+        
+        # Forward pass
+        self.model.eval()
+        with torch.no_grad():
+            policy1_logits, policy2_logits, value = self.model(state_tensor)
+            
+            policy1_probs = torch.softmax(policy1_logits, dim=1)[0]
+            policy2_probs = torch.softmax(policy2_logits, dim=1)[0]
+            value_scalar = value[0, 0].item()
+        
+        # Convert to dict
+        policy_p1 = {
+            f"action_{i}": prob.item()
+            for i, prob in enumerate(policy1_probs)
+        }
+        policy_p2 = {
+            f"action_{i}": prob.item()
+            for i, prob in enumerate(policy2_probs)
+        }
+        
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        
+        return PolicyValueOutput(
+            policy_pokemon1=policy_p1,
+            policy_pokemon2=policy_p2,
+            value=value_scalar,
+            inference_time_ms=elapsed_ms
+        )
+    
+    def _dummy_predict(self, battle_state: BattleState, start_time: float) -> PolicyValueOutput:
         legal_actions_p1 = self._get_legal_actions_for_pokemon(battle_state, player="A", slot=0)
         legal_actions_p2 = self._get_legal_actions_for_pokemon(battle_state, player="A", slot=1)
         
-        # Policy: 合法手に均等確率を割り当て (Phase 1)
         policy_p1 = {action: 1.0 / len(legal_actions_p1) for action in legal_actions_p1} if legal_actions_p1 else {}
         policy_p2 = {action: 1.0 / len(legal_actions_p2) for action in legal_actions_p2} if legal_actions_p2 else {}
         
-        # Value: ランダム評価値 (Phase 1)
         value = np.random.uniform(-0.5, 0.5)
         
         elapsed_ms = (time.perf_counter() - start_time) * 1000
@@ -179,16 +211,17 @@ class PolicyValueNetwork:
         }
     
     def _load_model(self, model_path: Path):
-        """学習済みモデルを読み込む"""
-        print(f"📥 モデル読み込み: {model_path}")
-        # Phase 2: PyTorchで実装
-        pass
+        print(f"📥 Loading: {model_path}")
+        if TORCH_AVAILABLE:
+            self.model = PolicyValueNet().to(self.device)
+            checkpoint = torch.load(model_path, map_location=self.device)
+            self.model.load_state_dict(checkpoint["model_state_dict"])
+            self.model.eval()
     
     def _initialize_random_model(self):
-        """ランダム初期化されたモデルを作成"""
-        print("🎲 ランダムモデル初期化")
-        # Phase 2: PyTorchで実装
-        pass
+        print("🎲 Random init")
+        if TORCH_AVAILABLE:
+            self.model = PolicyValueNet().to(self.device)
     
     def _get_legal_actions_for_pokemon(
         self,

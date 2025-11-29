@@ -5,8 +5,114 @@
   font-family: 'Inter', sans-serif;
 }
 
-.app-shell header {
+.hero {
   margin-bottom: 1.5rem;
+  padding: 1.75rem;
+  border-radius: 24px;
+  background: radial-gradient(circle at top right, #f0f9ff, #e0f2fe 40%, #fff);
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 1.5rem;
+  align-items: center;
+}
+
+.hero-text h1 {
+  margin: 0.35rem 0;
+  font-size: 2.4rem;
+}
+
+.hero-eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.85rem;
+  color: #2563eb;
+  margin: 0;
+}
+
+.hero-description {
+  margin: 0.75rem 0 1rem;
+  color: #475569;
+}
+
+.hero-tags {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.hero-tags span {
+  border-radius: 999px;
+  padding: 0.3rem 0.85rem;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.hero-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+}
+
+.metric-card {
+  border-radius: 16px;
+  padding: 1rem;
+  background: #0f172a;
+  color: #f8fafc;
+  box-shadow: 0 15px 35px rgba(15, 23, 42, 0.25);
+}
+
+.metric-label {
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.15em;
+  margin: 0;
+  color: rgba(248, 250, 252, 0.7);
+}
+
+.metric-card strong {
+  display: block;
+  font-size: 1.25rem;
+  margin: 0.35rem 0;
+}
+
+.metric-note {
+  margin: 0;
+  font-size: 0.85rem;
+  color: rgba(248, 250, 252, 0.8);
+}
+
+.workflow-steps {
+  margin-bottom: 1.5rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+}
+
+.step-card {
+  border-radius: 16px;
+  border: 1px solid #e2e8f0;
+  padding: 1rem;
+  background: #ffffff;
+  box-shadow: 0 10px 28px rgba(15, 23, 42, 0.08);
+}
+
+.step-label {
+  font-size: 0.75rem;
+  letter-spacing: 0.2em;
+  color: #94a3b8;
+  margin: 0;
+}
+
+.step-card h3 {
+  margin: 0.4rem 0;
+}
+
+.step-card p {
+  margin: 0;
+  color: #475569;
+  font-size: 0.9rem;
 }
 
 section {
@@ -123,6 +229,88 @@ textarea {
 
 .hint.small {
   font-size: 0.85rem;
+}
+
+.results-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.score-card {
+  border-radius: 18px;
+  border: 1px solid #e0e7ff;
+  padding: 1.2rem;
+  background: linear-gradient(135deg, #eef2ff, #ffffff);
+  box-shadow: 0 12px 30px rgba(79, 70, 229, 0.15);
+}
+
+.score-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.score-label {
+  margin: 0;
+  font-size: 0.9rem;
+  color: #475569;
+}
+
+.score-diff {
+  margin: 0.2rem 0 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.score-diff.lead {
+  color: #15803d;
+}
+
+.score-diff.lag {
+  color: #b91c1c;
+}
+
+.score-diff.meta {
+  color: #475569;
+}
+
+.score-value {
+  font-size: 2.8rem;
+  font-weight: 700;
+  margin: 0.4rem 0;
+  color: #111827;
+}
+
+.score-move {
+  margin: 0;
+  font-size: 0.85rem;
+  color: #475569;
+}
+
+.results-placeholder {
+  border: 1px dashed #cbd5f5;
+  border-radius: 18px;
+  padding: 1.5rem;
+  background: #f8fbff;
+}
+
+.placeholder-eyebrow {
+  margin: 0;
+  font-size: 0.85rem;
+  letter-spacing: 0.1em;
+  color: #2563eb;
+}
+
+.results-placeholder h3 {
+  margin: 0.35rem 0 0.75rem;
+}
+
+.results-placeholder ul {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: #475569;
 }
 
 .history-pager {

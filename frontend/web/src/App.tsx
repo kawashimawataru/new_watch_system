@@ -22,9 +22,36 @@ type PlayerEvaluation = {
   active: PokemonRecommendation[]
 }
 
+type HybridLaneAction = {
+  actor?: string | null
+  move?: string | null
+  target?: string | null
+  slot?: number | null
+}
+
+type HybridLaneSummary = {
+  lane: string
+  label: string
+  p1WinRate: number
+  p2WinRate: number
+  confidence: number
+  inferenceTimeMs: number
+  recommendedAction?: HybridLaneAction | null
+}
+
 type PredictorResponse = {
   playerA: PlayerEvaluation
   playerB: PlayerEvaluation
+  hybridLanes?: HybridLaneSummary[]
+}
+
+type ScoreboardCard = {
+  id: string
+  label: string
+  winRate: number
+  detail: string
+  detailClass?: string
+  recommendation: string
 }
 
 type MoveMetadata = {
@@ -494,6 +521,19 @@ const findTopRecommendation = (player: PlayerEvaluation) => {
   return { bestMove, bestPokemon }
 }
 
+const formatLaneRecommendation = (
+  action: HybridLaneAction | null | undefined,
+  slotNameMap: Record<string, string>,
+) => {
+  if (!action || !action.move) return '推奨技が計算されていません'
+  const actor = action.actor ? formatPokemonDisplayName(action.actor) : null
+  const targetLabel = describeTarget(action.target, 'playerA', slotNameMap) ?? '対象未指定'
+  if (actor) {
+    return `${actor} → ${action.move} (${targetLabel})`
+  }
+  return `${action.move} (${targetLabel})`
+}
+
 const buildPlayerExplanation = (
   sideKey: 'playerA' | 'playerB',
   label: string,
@@ -613,6 +653,86 @@ function App() {
           playerB: buildPlayerExplanation('playerB', '相手サイド', response.playerB, response.playerA, slotNameMap),
         }
       : null
+  const scoreboardCards: ScoreboardCard[] = useMemo(() => {
+    if (!response) return []
+    if (response.hybridLanes && response.hybridLanes.length > 0) {
+      return response.hybridLanes.map((lane) => ({
+        id: lane.lane,
+        label: lane.label,
+        winRate: lane.p1WinRate,
+        detail: `信頼度 ${(lane.confidence * 100).toFixed(0)}% · ${lane.inferenceTimeMs.toFixed(1)}ms`,
+        detailClass: 'meta',
+        recommendation: formatLaneRecommendation(lane.recommendedAction, slotNameMap),
+      }))
+    }
+    return (['playerA', 'playerB'] as const).map((key) => {
+      const player = response[key]
+      const opponent = response[key === 'playerA' ? 'playerB' : 'playerA']
+      const diff = player.winRate - opponent.winRate
+      const detail =
+        Math.abs(diff) < 0.01
+          ? 'ほぼ互角'
+          : diff > 0
+          ? `+${(diff * 100).toFixed(1)}pt リード`
+          : `${(diff * 100).toFixed(1)}pt ビハインド`
+      const detailClass = diff >= 0 ? 'lead' : 'lag'
+      const { bestMove, bestPokemon } = findTopRecommendation(player)
+      const targetLabel =
+        bestMove ? describeTarget(bestMove.target, key, slotNameMap) ?? '対象未指定' : null
+      const recommendation =
+        bestMove && bestPokemon
+          ? `${bestPokemon} → ${bestMove.move}${targetLabel ? ` (${targetLabel})` : ''}`
+          : '推奨技が計算されていません'
+      return {
+        id: key,
+        label: key === 'playerA' ? '自分サイド' : '相手サイド',
+        winRate: player.winRate,
+        detail,
+        detailClass,
+        recommendation,
+      }
+    })
+  }, [response, slotNameMap])
+  const workflowSteps = [
+    {
+      id: 'step-1',
+      label: 'STEP 1',
+      title: 'チームを貼り付け',
+      description: 'Pokepaste 形式で味方 / 相手の構成を入力します。moves・item・teratype も読み取ります。',
+    },
+    {
+      id: 'step-2',
+      label: 'STEP 2',
+      title: 'Showdown ログを貼付',
+      description: 'Battle Log JSON を入力すると盤面と行動履歴がプレビューされます。',
+    },
+    {
+      id: 'step-3',
+      label: 'STEP 3',
+      title: 'evaluate_position を実行',
+      description: 'HybridStrategist API に送信し、Fast / Slow / AlphaZero の 3 レーン推奨を取得します。',
+    },
+  ]
+  const scoreboard = response
+    ? (['playerA', 'playerB'] as const).map((key) => {
+        const player = response[key]
+        const opponent = response[key === 'playerA' ? 'playerB' : 'playerA']
+        const { bestMove, bestPokemon } = findTopRecommendation(player)
+        const bestMoveLabel =
+          bestMove && bestPokemon
+            ? `${formatPokemonDisplayName(bestPokemon)} → ${bestMove.move}${
+                bestMove.target ? ` (${describeTarget(bestMove.target, key, slotNameMap)})` : ''
+              }`
+            : '推奨技がここに表示されます'
+        return {
+          key,
+          label: key === 'playerA' ? '自分サイド' : '相手サイド',
+          winRate: player.winRate,
+          diff: player.winRate - opponent.winRate,
+          bestMove: bestMoveLabel,
+        }
+      })
+    : []
   const renderBattleSide = (key: 'playerA' | 'playerB') => {
     if (!battlePreview) return null
     const side = battlePreview[key]
@@ -794,6 +914,7 @@ function App() {
         battle_log: parseJson('Battle Log', battleLog),
         estimated_evs: parseJson('Estimated EVs', estimatedEvs),
         algorithm,
+        include_hybrid: true,
       }
       if (!payload.team_a_pokepaste || !payload.team_b_pokepaste || !payload.battle_log) {
         throw new Error('Team / Battle Log の入力が必要です')
@@ -834,10 +955,41 @@ function App() {
 
   return (
     <div className="app-shell">
-      <header>
-        <h1>VGC Position Evaluator</h1>
-        <p>Pokepaste / Showdown ログを入力して勝率と推奨技を取得します。</p>
+      <header className="hero">
+        <div className="hero-text">
+          <p className="hero-eyebrow">HybridStrategist Visual Console</p>
+          <h1>VGC Position Evaluator</h1>
+          <p className="hero-description">
+            Pokepaste と Showdown ログを貼り付けるだけで、Fast / Slow / AlphaZero の 3 レーン推奨を一枚の画面で確認できます。
+          </p>
+          <div className="hero-tags">
+            <span>Fast-Lane</span>
+            <span>Slow-Lane</span>
+            <span>AlphaZero</span>
+          </div>
+        </div>
+        <div className="hero-metrics">
+          <div className="metric-card">
+            <p className="metric-label">現在フェーズ</p>
+            <strong>Phase 1.3 Strategist</strong>
+            <p className="metric-note">React UI 強化 / API 連携</p>
+          </div>
+          <div className="metric-card">
+            <p className="metric-label">最新サマリ</p>
+            <strong>2025-11-19</strong>
+            <p className="metric-note">ForAgentRead.md を参照</p>
+          </div>
+        </div>
       </header>
+      <section className="workflow-steps">
+        {workflowSteps.map((step) => (
+          <article className="step-card" key={step.id}>
+            <p className="step-label">{step.label}</p>
+            <h3>{step.title}</h3>
+            <p>{step.description}</p>
+          </article>
+        ))}
+      </section>
       <section className="workspace-grid">
         <div className="workspace-main">
           <div className="battle-preview-card">
@@ -1051,6 +1203,22 @@ function App() {
         <h2>結果</h2>
         {response ? (
           <>
+            {scoreboardCards.length ? (
+              <div className="results-summary">
+                {scoreboardCards.map((card) => (
+                  <article className="score-card" key={card.id}>
+                    <div className="score-header">
+                      <div>
+                        <p className="score-label">{card.label}</p>
+                        <p className={`score-diff ${card.detailClass ?? ''}`}>{card.detail}</p>
+                      </div>
+                    </div>
+                    <div className="score-value">{formatPercentage(card.winRate)}</div>
+                    <p className="score-move">{card.recommendation}</p>
+                  </article>
+                ))}
+              </div>
+            ) : null}
             <div className="results-grid">
               {([
                 ['playerA', response.playerA] as const,
@@ -1167,7 +1335,15 @@ function App() {
             </details>
           </>
         ) : (
-          <p className="hint">まだ結果はありません。入力後に実行してください。</p>
+          <div className="results-placeholder">
+            <p className="placeholder-eyebrow">まだ評価はありません</p>
+            <h3>画面右のフォームで入力 → evaluate_position を実行</h3>
+            <ul>
+              <li>STEP 1: Pokepaste 形式で味方 / 相手チームを貼り付け</li>
+              <li>STEP 2: Showdown Battle Log JSON を貼付</li>
+              <li>STEP 3: evaluate_position ボタンで推奨結果を取得</li>
+            </ul>
+          </div>
         )}
       </section>
     </div>

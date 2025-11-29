@@ -61,6 +61,7 @@ curl -X POST http://localhost:8000/evaluate-position \
 ```
 
 ※ `payload.json` の中身は `frontend/web/public/sample-data.json` を参考に作成すると手早く試せます。
+- Fast/Slow/AlphaZero の Hybrid 統計を UI で表示したい場合は、リクエストボディに `include_hybrid: true` を追加するとレスポンスに `hybridLanes` (勝率/信頼度/推奨行動/推論時間) が付与されます。
 
 ### 1.4 Showdown データ同期
 

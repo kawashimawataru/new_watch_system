@@ -1,0 +1,18 @@
+{
+  "model": "models/policy_value_v1.pt",
+  "n_samples": 50,
+  "alphazero": {
+    "inference_time_ms": {
+      "mean": NaN,
+      "std": NaN
+    },
+    "policy_entropy": {
+      "mean": NaN,
+      "std": NaN
+    },
+    "top1_confidence": {
+      "mean": NaN,
+      "std": NaN
+    }
+  }
+}

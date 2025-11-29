@@ -9,7 +9,7 @@ from predictor.core.eval_algorithms.heuristic_eval import HeuristicEvaluator
 from predictor.core.eval_algorithms.mcts_eval import MCTSEvaluator
 from predictor.core.eval_algorithms.ml_eval import MLEvaluator
 from predictor.core.ev_estimator import EVEstimator
-from predictor.core.models import EvaluationResult
+from predictor.core.models import BattleState, EvaluationResult
 from predictor.data.showdown_loader import ShowdownDataRepository
 from predictor.engine.action_annotator import annotate_actions
 from predictor.engine.damage_calculator import DamageCalculator
@@ -38,6 +38,7 @@ def evaluate_position(
     parser: Optional[TeamParser] = None,
     state_rebuilder: Optional[StateRebuilder] = None,
     ev_prior_path: Optional[Path] = None,
+    return_battle_state: bool = False,
 ) -> Dict[str, Any]:
     """
     Evaluate a double battle position and return win rates plus move suggestions.
@@ -54,6 +55,39 @@ def evaluate_position(
         "B": {entry.name: {"nature": entry.nature, "ability": entry.ability, "species": entry.species} for entry in team_b_entries},
     }
 
+    battle_state = _build_battle_state(
+        team_a_entries=team_a_entries,
+        team_b_entries=team_b_entries,
+        battle_log=battle_log,
+        estimated_evs=estimated_evs,
+        ev_prior_path=ev_prior_path,
+        state_rebuilder=state_rebuilder,
+        team_metadata=team_metadata,
+    )
+
+    evaluator = _get_evaluator(algorithm)
+    try:
+        evaluation: EvaluationResult = evaluator.evaluate(battle_state)
+    except NotImplementedError as exc:
+        raise RuntimeError(f"Algorithm '{algorithm}' is not ready yet.") from exc
+
+    payload = evaluation.to_dict()
+    if return_battle_state:
+        return payload, battle_state
+    return payload
+
+
+def _build_battle_state(
+    *,
+    team_a_entries,
+    team_b_entries,
+    battle_log: Dict[str, Any],
+    estimated_evs: Dict[str, Dict[str, Dict[str, int]]],
+    ev_prior_path: Optional[Path],
+    state_rebuilder: Optional[StateRebuilder],
+    team_metadata: Dict[str, Dict[str, Dict[str, str]]],
+) -> "BattleState":
+    """Rebuild BattleState from inputs so other services (Hybrid/AlphaZero) can reuse it."""
     estimator = EVEstimator(ev_prior_path, data_repo=DATA_REPO)
     estimator.initialize_player("A", [entry.to_payload() for entry in team_a_entries], overrides=estimated_evs.get("A"))
     estimator.initialize_player("B", [entry.to_payload() for entry in team_b_entries], overrides=estimated_evs.get("B"))
@@ -69,14 +103,7 @@ def evaluate_position(
     battle_state.ev_estimates = ev_assignments
 
     annotate_actions(battle_state, ev_assignments, DAMAGE_CALCULATOR)
-
-    evaluator = _get_evaluator(algorithm)
-    try:
-        evaluation: EvaluationResult = evaluator.evaluate(battle_state)
-    except NotImplementedError as exc:
-        raise RuntimeError(f"Algorithm '{algorithm}' is not ready yet.") from exc
-
-    return evaluation.to_dict()
+    return battle_state
 
 
 def _get_evaluator(algorithm: str):
