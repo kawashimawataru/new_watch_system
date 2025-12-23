@@ -1,5 +1,1 @@
-# predictor.player パッケージ
-
-from predictor.player.ai_player import AIPlayer
-
-__all__ = ["AIPlayer"]
+# predictor.player パッケージ - 互換性維持用
