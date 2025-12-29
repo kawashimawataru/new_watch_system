@@ -99,6 +99,14 @@ class HeuristicEvaluator:
         return recommendations
 
     def _score_action_candidate(self, action: ActionCandidate) -> float:
+        """
+        アクション候補のスコアを計算
+        
+        Phase 4.3: Consistent Action Generation
+        - パニック交代のペナルティ（HP高いのに交代）
+        - 連続Protectのペナルティ
+        - 無効技の回避
+        """
         score = 0.1  # base prior to avoid zeros
         for tag in action.tags:
             score += self.tag_bonus.get(tag, 0.0)
@@ -114,8 +122,37 @@ class HeuristicEvaluator:
             score += 0.05 * damage.get("hitChance", 0.0)
         if action.target and "slot2" in action.target:
             score += 0.05  # encourage spread coverage on the second slot
+        
+        # === Consistent Action Generation (Phase 4.3) ===
+        
+        # 交代ペナルティ（HP が高いのに交代はパニック交代とみなす）
         if action.metadata.get("is_switch"):
+            actor_hp = action.metadata.get("actor_hp_fraction", 1.0)
+            if actor_hp > 0.7:
+                # HPが70%以上で交代は大幅減点（パニック交代）
+                score -= 0.4
+            elif actor_hp > 0.4:
+                # 中程度のHPでは軽めのペナルティ
+                score -= 0.15
+            else:
+                # HPが低い場合の交代は妥当
+                score -= 0.05
+        
+        # 連続Protect使用のペナルティ
+        if action.move and action.move.lower() == "protect":
+            consecutive_protects = action.metadata.get("consecutive_protects", 0)
+            if consecutive_protects > 0:
+                # 連続使用すると成功率が下がる（1/3 → 1/9 → ...）
+                score -= 0.3 * consecutive_protects
+        
+        # 無効技の回避（タイプ相性・特性）
+        if action.metadata.get("is_immune"):
+            score -= 1.0  # 無効技は大幅減点
+        
+        # いまひとつの技はやや減点
+        if action.metadata.get("is_not_very_effective"):
             score -= 0.15
+        
         return max(score, 0.01)
 
     @staticmethod
@@ -144,3 +181,60 @@ class HeuristicEvaluator:
     @staticmethod
     def _sigmoid(value: float) -> float:
         return 1.0 / (1.0 + math.exp(-value))
+    
+    def get_action_weights(self, state: BattleState, actions: List[ActionCandidate]) -> List[float]:
+        """
+        Guided Playouts用にアクションの重みを計算
+        
+        MCTSシミュレーション中に使用される。
+        完全にランダムではなく、より有望な手を優先的に選択するための重み付け。
+        
+        Args:
+            state: 現在のバトル状態
+            actions: アクション候補リスト
+        
+        Returns:
+            各アクションの選択確率（合計1.0）
+        """
+        if not actions:
+            return []
+        
+        scores = []
+        for action in actions:
+            score = self._score_action_candidate(action)
+            
+            # === Phase 3 追加評価 ===
+            # 残りHP低下時の先制技ボーナス
+            actor_name = action.actor
+            actor_hp = 1.0
+            for p in state.player_a.active:
+                if p.name == actor_name:
+                    actor_hp = p.hp_fraction
+                    break
+            
+            # HP低い時に先制技を優遇
+            if "priority" in action.tags and actor_hp < 0.4:
+                score += 0.3
+            
+            # Protectは連続使用で失敗しやすいが、初回は高評価
+            if action.move and action.move.lower() == "protect":
+                score += 0.15
+            
+            # 味方殴りの技は低評価（味方対象の場合）
+            if action.target and "ally" in str(action.target).lower():
+                score -= 0.3
+            
+            scores.append(max(score, 0.01))  # 最低値を保証
+        
+        # Softmax風の正規化（より高いスコアを優先しつつ、探索も維持）
+        # 温度パラメータを適用（低いほど最良手に集中）
+        temperature = 0.5
+        exp_scores = [math.exp(s / temperature) for s in scores]
+        total = sum(exp_scores)
+        
+        if total <= 0:
+            uniform = 1.0 / len(actions)
+            return [uniform] * len(actions)
+        
+        return [s / total for s in exp_scores]
+

@@ -37,6 +37,14 @@ from predictor.core.models import (
 )
 from predictor.core.eval_algorithms.heuristic_eval import HeuristicEvaluator
 from predictor.engine.smogon_calc_wrapper import SmogonCalcWrapper
+from src.domain.models import get_type_effectiveness
+from src.domain.models.item_effects import (
+    get_item_effect,
+    get_boost_multiplier,
+    ItemCategory
+)
+from src.domain.models.item import Item
+from src.domain.models.move import Move
 
 
 @dataclass
@@ -230,21 +238,32 @@ class MonteCarloStrategist:
         current_state = self._apply_action(current_state, first_action)
         turns = 1
         
-        # バトルが終了するまでランダムな手を打ち続ける
+        # バトルが終了するまで Guided Playouts で手を選ぶ
         while turns < self.max_turns:
             # バトル終了判定
             winner = self._check_winner(current_state)
             if winner is not None:
                 return winner, turns
             
-            # ランダムな行動を選択
+            # Guided Playouts: ヒューリスティックに基づく重み付け選択
             legal_actions = self._get_legal_actions(current_state)
             if not legal_actions:
                 # 合法手がない = 引き分け (稀)
                 return "player_a" if random.random() < 0.5 else "player_b", turns
             
-            random_action = random.choice(legal_actions)
-            current_state = self._apply_action(current_state, random_action)
+            # ActionCandidate リストを作成してスコアリング
+            action_candidates = self._convert_to_action_candidates(legal_actions)
+            if action_candidates and self.use_heuristic:
+                weights = self.evaluator.get_action_weights(current_state, action_candidates)
+                if weights and len(weights) == len(legal_actions):
+                    # 重み付きランダム選択
+                    selected_action = random.choices(legal_actions, weights=weights, k=1)[0]
+                else:
+                    selected_action = random.choice(legal_actions)
+            else:
+                selected_action = random.choice(legal_actions)
+            
+            current_state = self._apply_action(current_state, selected_action)
             turns += 1
         
         # 最大ターン数に達した場合、ヒューリスティック評価で勝者を決定
@@ -336,12 +355,94 @@ class MonteCarloStrategist:
             )
         ]
     
+    def _convert_to_action_candidates(self, turn_actions: List[TurnAction]) -> List[ActionCandidate]:
+        """
+        TurnAction リストを ActionCandidate リストに変換
+        
+        Guided Playouts のためのスコアリングで使用。
+        Player A の行動のみを抽出してスコアリング用に変換する。
+        """
+        candidates = []
+        for turn_action in turn_actions:
+            for act in turn_action.player_a_actions:
+                if act.type == "move" and act.move_name:
+                    candidates.append(
+                        ActionCandidate(
+                            actor=f"slot_{act.pokemon_slot}",
+                            slot=act.pokemon_slot,
+                            move=act.move_name,
+                            target=str(act.target_slot) if act.target_slot is not None else None,
+                            tags=[],  # 基本タグは空、必要に応じて拡張
+                            metadata={}
+                        )
+                    )
+        return candidates
+    
     def _parse_target(self, target: Optional[str]) -> int:
         """対象を slot 番号に変換"""
         if target is None:
             return 2  # デフォルトで相手の左側
         # TODO: 実際のターゲット解析
         return 2
+
+    def _calculate_damage(self, attacker: Optional[PokemonBattleState], 
+                         defender: Optional[PokemonBattleState], 
+                         move_name: str) -> float:
+        """
+        簡易ダメージ計算 (ダメージ率を返す)
+        
+        Phase 2実装:
+        - ステータスベース
+        - タイプ相性
+        - アイテム補正
+        """
+        if not attacker or not defender:
+            return 0.1
+            
+        # 簡易的に物理/特殊を高い方で採用
+        atk = max(attacker.attack, attacker.special_attack)
+        
+        # 防御力
+        def_stat = min(defender.defense, defender.special_defense)
+        if def_stat == 0: def_stat = 1
+        
+        # Move Data
+        move = Move(move_name)
+        base_power = move.base_power
+        
+        # アイテムによる威力補正 (攻撃側)
+        if attacker.item:
+            item = Item(attacker.item)
+            base_power *= item.get_damage_modifier(move.type, move.is_physical) # type: ignore
+
+        # タイプ相性
+        # move_name からタイプを推測するのは困難なため、ここでは等倍とする
+        # 実際には Move オブジェクトを Action に含める改修が必要 (Phase 2.1)
+        effectiveness = 1.0
+        if move.type:
+             # ここで本当はタイプ相性計算を入れるべきだが、今回はアイテム実装が主。
+             # 既存の get_type_effectiveness を使うには defender.types が必要
+             pass
+
+        # ダメージ = (威力 * 攻撃 / 防御) * 係数
+        # レベル50想定: (22 * 威力 * A / D / 50 + 2) * ...
+        damage_pct = (base_power * atk / def_stat / 200.0)
+        
+        # アイテムによる軽減 (防御側) - 半減実
+        if defender.item and effectiveness > 1.0: # 効果抜群の場合のみ
+             def_item = Item(defender.item)
+             resist_type = def_item.get_resist_berry_type()
+             if resist_type and resist_type == move.type:
+                 damage_pct *= 0.5
+        
+        # 乱数 (0.85 ~ 1.0)
+        damage_pct *= random.uniform(0.85, 1.0)
+        
+        # Life Orbの反動などは _apply_action で処理するが、
+        # ここでは純粋なダメージ予測のみ
+        
+        return min(damage_pct, 1.0)
+
     
     def _apply_action(
         self,
@@ -356,25 +457,47 @@ class MonteCarloStrategist:
         - HPを減らす
         - 倒れたポケモンの処理
         
-        Phase 2以降:
-        - smogon_calc_wrapper を使った正確なダメージ計算
-        - 速度判定
-        - 状態異常
-        - 天候・フィールド効果
+        Phase 2実装:
+        - _calculate_damage によるダメージ計算
         """
         new_state = copy.deepcopy(state)
         
         # Player Aの行動を適用
         for act in action.player_a_actions:
             if act.type == "move" and act.target_slot is not None:
-                # 簡易ダメージ: 10-30%のランダムダメージ
-                damage = random.uniform(0.1, 0.3)
+                attacker = None
+                if act.pokemon_slot < len(new_state.player_a.active):
+                    attacker = new_state.player_a.active[act.pokemon_slot]
+                
+                defender = None
+                if act.target_slot < 2:
+                    if act.target_slot < len(new_state.player_a.active):
+                        defender = new_state.player_a.active[act.target_slot]
+                else:
+                    b_slot = act.target_slot - 2
+                    if b_slot < len(new_state.player_b.active):
+                        defender = new_state.player_b.active[b_slot]
+
+                damage = self._calculate_damage(attacker, defender, act.move_name)
                 self._apply_damage(new_state, act.target_slot, damage)
         
         # Player Bの行動を適用
         for act in action.player_b_actions:
             if act.type == "move" and act.target_slot is not None:
-                damage = random.uniform(0.1, 0.3)
+                attacker = None
+                if act.pokemon_slot < len(new_state.player_b.active):
+                    attacker = new_state.player_b.active[act.pokemon_slot]
+                
+                defender = None
+                if act.target_slot < 2:
+                    if act.target_slot < len(new_state.player_a.active):
+                        defender = new_state.player_a.active[act.target_slot]
+                else:
+                    b_slot = act.target_slot - 2
+                    if b_slot < len(new_state.player_b.active):
+                        defender = new_state.player_b.active[b_slot]
+                        
+                damage = self._calculate_damage(attacker, defender, act.move_name)
                 self._apply_damage(new_state, act.target_slot, damage)
         
         # 倒れたポケモンの処理

@@ -28,6 +28,21 @@ from predictor.core.models import (
     ActionCandidate
 )
 
+# Domain Services (DDD)
+from src.domain.services.action_filter_service import (
+    ActionFilterService,
+    get_action_filter_service,
+    PokemonActionContext,
+)
+from src.domain.models.item_effects import (
+    is_choice_item,
+    blocks_status_moves,
+)
+from src.domain.models.move_properties import (
+    get_move_score_bonus,
+    get_move_priority,
+)
+
 
 class VGCAIPlayer(Player):
     """
@@ -80,9 +95,21 @@ class VGCAIPlayer(Player):
             mcts_rollouts=300,  # VGCでは応答速度重視
             mcts_max_turns=15
         )
+        
+        # ActionFilterService (DDD) - こだわりロック・先制技評価
+        self.action_filter = get_action_filter_service()
+        
+        # PredictionEngine (ゲーム理論ベース予測)
+        from predictor.core.prediction_engine import get_prediction_engine
+        self.prediction_engine = get_prediction_engine()
+        
+        # 各ポケモンが場に出たターンを追跡（Fake Out等の判定用）
+        self._pokemon_entry_turn: dict = {}  # {species: turn_entered}
+        
         print(f"🎮 VGC AI Player 起動")
         print(f"   フォーマット: {battle_format}")
         print(f"   戦略: {strategy}")
+        print(f"   予測エンジン: PredictionEngine (Quantal Response)")
         print(f"   チャレンジを待機中...")
 
     def _handle_message(self, message: str) -> None:
@@ -132,6 +159,7 @@ class VGCAIPlayer(Player):
         
         # BattleStateに変換して予測
         slow_result = None
+        predict_result = None
         try:
             battle_state = self._convert_battle_to_state(battle)
             _, slow_result = self.strategist.predict_both(battle_state)
@@ -148,6 +176,38 @@ class VGCAIPlayer(Player):
             
             if slow_result.explanation:
                 print(f"  💡 {slow_result.explanation}")
+            
+            # === PredictionEngine で行動分布を予測 ===
+            try:
+                predict_result = self.prediction_engine.predict(battle)
+                
+                print(f"\n{'─'*40}")
+                print(f"🎲 行動分布予測 (Quantal Response)")
+                print(f"{'─'*40}")
+                
+                # 自分の行動分布
+                print(f"  📌 自分の予測行動:")
+                for i, ap in enumerate(predict_result.self_action_dist[:3]):
+                    slot0 = ap.action.slot0_action
+                    slot1 = ap.action.slot1_action
+                    prob_bar = "█" * int(ap.probability * 10)
+                    print(f"     {i+1}. [{slot0.move_or_pokemon}] + [{slot1.move_or_pokemon}]  {ap.probability:.0%} {prob_bar}")
+                
+                # 相手の行動分布
+                print(f"  📌 相手の予測行動:")
+                for i, ap in enumerate(predict_result.opp_action_dist[:3]):
+                    slot0 = ap.action.slot0_action
+                    slot1 = ap.action.slot1_action
+                    prob_bar = "█" * int(ap.probability * 10)
+                    print(f"     {i+1}. [{slot0.move_or_pokemon}] + [{slot1.move_or_pokemon}]  {ap.probability:.0%} {prob_bar}")
+                
+                # 根拠アンカー
+                if predict_result.rationales:
+                    print(f"  💡 根拠: {', '.join(predict_result.rationales)}")
+                
+                print(f"{'─'*40}")
+            except Exception as e:
+                print(f"⚠️ PredictionEngine エラー: {e}")
             
             # === 予測行動の表示 ===
             self._display_action_predictions(battle, slow_result.alternatives)
@@ -284,47 +344,105 @@ class VGCAIPlayer(Player):
 
     def _choose_heuristic_action(self, battle: DoubleBattle):
         """
-        ダブルバトル用のヒューリスティック行動選択
-        BattleOrderのリストを返す
+        ダブルバトル用のヒューリスティック行動選択（DDD対応版）
+        
+        改善点:
+        1. こだわり系アイテムによる技ロック
+        2. Assault Vestによる変化技禁止
+        3. 先制技の優先度スコアボーナス
+        4. 初ターン限定技（Fake Out等）の判定
         """
         orders = []
+        
+        # 場のポケモンの初ターン判定を更新
+        self._update_entry_turns(battle)
         
         for i, pokemon in enumerate(battle.active_pokemon):
             if pokemon is None or pokemon.fainted:
                 continue
             
-            # 利用可能な技
+            # 利用可能な技・交代先
             available_moves = battle.available_moves[i] if i < len(battle.available_moves) else []
-            # 利用可能な交代先
             available_switches = battle.available_switches[i] if i < len(battle.available_switches) else []
             
+            # このポケモンが場に出た最初のターンか
+            is_first_turn = self._is_first_turn_in_battle(pokemon.species, battle.turn)
+            
+            # 持っているアイテム
+            item = pokemon.item if hasattr(pokemon, 'item') else None
+            
+            # --- こだわり系ロックの確認 ---
+            locked_move_id = self.action_filter.get_locked_move(pokemon.species)
+            if locked_move_id and is_choice_item(item or ""):
+                # ロックされた技のみに絞る
+                locked_moves = [m for m in available_moves if m.id == locked_move_id]
+                if locked_moves:
+                    available_moves = locked_moves
+                    print(f"  🔒 {pokemon.species}: こだわりロック → {locked_move_id}")
+            
+            # --- Assault Vest: 変化技を除外 ---
+            if blocks_status_moves(item or ""):
+                original_count = len(available_moves)
+                available_moves = [m for m in available_moves 
+                                   if not self._is_status_move(m)]
+                if len(available_moves) < original_count:
+                    print(f"  🛡️ {pokemon.species}: Assault Vest変化技除外")
+            
             if available_moves:
-                # 最も威力の高い技を選択
-                best_move = max(
-                    available_moves,
-                    key=lambda m: m.base_power if m.base_power else 0
-                )
+                # --- スコアベースで最適な技を選択 ---
+                def calculate_move_score(move) -> float:
+                    base_power = move.base_power if move.base_power else 50
+                    bonus = get_move_score_bonus(move.id)
+                    priority = get_move_priority(move.id)
+                    
+                    # 先制技ボーナス
+                    priority_bonus = max(0, priority) * 10
+                    
+                    # 初ターン限定技（Fake Out等）
+                    if move.id in ["fakeout", "firstimpression"]:
+                        if is_first_turn:
+                            priority_bonus += 50  # 初ターンなら大ボーナス
+                        else:
+                            return -1  # 初ターンでなければ使用不可
+                    
+                    return base_power + bonus + priority_bonus
                 
-                # ターゲット選択: poke-envでは正の値が相手を指す
-                # 1 = 相手スロット1, 2 = 相手スロット2
-                target_str = str(best_move.target).lower()
-                needs_target = "normal" in target_str or "any" in target_str
+                # スコア計算して最高スコアの技を選択
+                scored_moves = [(m, calculate_move_score(m)) for m in available_moves]
+                scored_moves = [(m, s) for m, s in scored_moves if s >= 0]  # 使用不可を除外
                 
-                if needs_target:
-                    # 相手を狙う (生きている相手の最初のスロット)
-                    target = 1
-                    for j, opp in enumerate(battle.opponent_active_pokemon):
-                        if opp and not opp.fainted:
-                            target = j + 1  # 1 or 2
-                            break
-                    order = self.create_order(best_move, move_target=target)
-                    print(f"  行動[{i}]: {best_move.id} -> 相手{target}")
-                else:
-                    # 全体技等、ターゲット不要
-                    order = self.create_order(best_move)
-                    print(f"  行動[{i}]: {best_move.id}")
-                orders.append(order)
-                
+                if scored_moves:
+                    best_move, best_score = max(scored_moves, key=lambda x: x[1])
+                    
+                    # --- ロック状態を更新（こだわり系） ---
+                    if is_choice_item(item or ""):
+                        self.action_filter.update_lock_status(
+                            pokemon.species, item, best_move.id
+                        )
+                    
+                    # ターゲット選択
+                    target_str = str(best_move.target).lower()
+                    needs_target = "normal" in target_str or "any" in target_str
+                    
+                    if needs_target:
+                        target = 1
+                        for j, opp in enumerate(battle.opponent_active_pokemon):
+                            if opp and not opp.fainted:
+                                target = j + 1
+                                break
+                        order = self.create_order(best_move, move_target=target)
+                        print(f"  行動[{i}]: {best_move.id} → 相手{target} (score: {best_score:.0f})")
+                    else:
+                        order = self.create_order(best_move)
+                        print(f"  行動[{i}]: {best_move.id} (score: {best_score:.0f})")
+                    orders.append(order)
+                elif available_switches:
+                    # 技が全て使えない場合は交代
+                    switch_target = available_switches[0]
+                    order = self.create_order(switch_target)
+                    orders.append(order)
+                    print(f"  行動[{i}]: 交代 → {switch_target.species}")
+                    
             elif available_switches:
                 # 技がない場合は交代
                 switch_target = available_switches[0]
@@ -333,15 +451,13 @@ class VGCAIPlayer(Player):
                 print(f"  行動[{i}]: 交代 → {switch_target.species}")
         
         # 強制交代の場合
-        if battle.force_switch:
+        if any(battle.force_switch):
             orders = []
-            used_switches = set()  # 既に選択したポケモンを追跡
+            used_switches = set()
             
-            # 両方のスロットについて順番に処理（順序が重要）
             for i, force in enumerate(battle.force_switch):
                 if force:
                     available_switches = battle.available_switches[i] if i < len(battle.available_switches) else []
-                    # まだ選択されていないポケモンを選ぶ
                     found = False
                     for sw in available_switches:
                         if sw.species not in used_switches:
@@ -349,27 +465,44 @@ class VGCAIPlayer(Player):
                             used_switches.add(sw.species)
                             order = self.create_order(switch_target)
                             orders.append(order)
+                            # ロック状態をクリア（交代するので）
+                            self.action_filter.clear_lock(sw.species)
                             print(f"  強制交代[{i}]: → {switch_target.species}")
                             found = True
                             break
                     if not found and available_switches:
-                        # 重複しても仕方なく選ぶ
                         order = self.create_order(available_switches[0])
                         orders.append(order)
                         print(f"  強制交代[{i}]: → {available_switches[0].species} (重複)")
                 else:
-                    # 交代不要な場合はpassを追加（順序維持のため）
-                    # poke-envでは None を渡す
                     orders.append(None)
                     print(f"  強制交代[{i}]: pass (交代不要)")
             
-            # Noneを含む場合はDoubleBattleOrderで返す
             from poke_env.player.battle_order import DoubleBattleOrder
             first_order = orders[0] if len(orders) >= 1 else None
             second_order = orders[1] if len(orders) >= 2 else None
             return DoubleBattleOrder(first_order=first_order, second_order=second_order)
         
         return orders
+    
+    def _update_entry_turns(self, battle: DoubleBattle) -> None:
+        """各ポケモンが場に出たターンを追跡"""
+        for pokemon in battle.active_pokemon:
+            if pokemon and not pokemon.fainted:
+                if pokemon.species not in self._pokemon_entry_turn:
+                    self._pokemon_entry_turn[pokemon.species] = battle.turn
+    
+    def _is_first_turn_in_battle(self, species: str, current_turn: int) -> bool:
+        """このポケモンが場に出た最初のターンか判定"""
+        entry_turn = self._pokemon_entry_turn.get(species)
+        return entry_turn == current_turn
+    
+    def _is_status_move(self, move) -> bool:
+        """変化技かどうかを判定"""
+        if hasattr(move, 'category'):
+            category = str(move.category).upper()
+            return "STATUS" in category
+        return False
 
     def _convert_battle_to_state(self, battle: DoubleBattle) -> BattleState:
         """DoubleBattle -> BattleState 変換"""
@@ -491,6 +624,24 @@ class VGCAIPlayer(Player):
                 action_short = action_desc[:22] if len(action_desc) > 22 else action_desc
                 print(f"{'║'}     {action_short:<22} {prob:>5.0%}  {bar:<16} {'║'}")
         
+        print(f"{'╚' + '═'*62 + '╝'}")
+
+        # === 予測行動順序 ===
+        from src.domain.services.turn_order_service import get_turn_order_service
+        turn_order = get_turn_order_service().get_predicted_turn_order(battle)
+        
+        print(f"\n{'╔' + '═'*62 + '╗'}")
+        print(f"{'║'} ⚡ 予測行動順序 (Predicted Turn Order)                         {'║'}")
+        print(f"{'╠' + '═'*62 + '╣'}")
+        for rank, (name, speed, is_p1) in enumerate(turn_order, 1):
+            if is_p1:
+                # 自分 (Blue)
+                color_name = f"\033[1;34m{name}\033[0m"
+            else:
+                # 相手 (Red)
+                color_name = f"\033[1;31m{name}\033[0m"
+            
+            print(f"{'║'} {rank}. {color_name:<30} (Speed: {int(speed):>4})        {'║'}")
         print(f"{'╚' + '═'*62 + '╝'}")
     
     def _analyze_action_probabilities(self, battle: DoubleBattle, alternatives: list, is_p1: bool) -> dict:
@@ -650,69 +801,140 @@ class VGCAIPlayer(Player):
     def _analyze_action_probabilities_with_targets(self, battle: DoubleBattle, alternatives: list, is_p1: bool) -> dict:
         """
         各ポケモンの行動確率を計算（ターゲット・交代込み）
-        
-        Returns:
-            {
-                "Tornadus": {
-                    "Tailwind": 0.3,
-                    "Bleakwindstorm → 相手全体": 0.25,
-                    "交代 → Ragingbolt": 0.15,
-                    ...
-                }
-            }
+        MCTSの結果(alternatives)があればそれを優先的に使用。
         """
         predictions = {}
         
         # 自分のアクティブポケモン
         active_pokemon = battle.active_pokemon if is_p1 else battle.opponent_active_pokemon
         
+        # MCTSの結果を解析して、各スロット・各行動の確率を集計
+        # alternatives = [{"description": "thunderbolt (slot 0->1), protect (slot 1)", "win_rate": 0.6}, ...]
+        mcts_probs = {} # { species_name: { action_desc: prob } }
+        
+        # MCTS結果のパース
+        if alternatives:
+            total_weight = sum(alt.get("win_rate", 0) for alt in alternatives)
+            if total_weight > 0:
+                for alt in alternatives:
+                    desc_str = alt.get("description", "").lower() # "thunderbolt (slot 0->1), ..."
+                    win_rate = alt.get("win_rate", 0)
+                    prob = win_rate / total_weight
+                    
+                    # descriptionを分解
+                    # 例: "move_a (slot 0->1), move_b (slot 1)"
+                    parts = desc_str.split(", ")
+                    for part in parts:
+                        # part: "thunderbolt (slot 0->1)" or "protect (slot 0)" or "switch 3 (slot 0)"
+                        if "(slot" not in part:
+                            continue
+                            
+                        # アクションとスロット情報を分離
+                        # "thunderbolt (slot 0->1)" -> action="thunderbolt", slot_info="0->1"
+                        try:
+                            action_raw, slot_part = part.rsplit(" (slot ", 1)
+                            slot_info = slot_part.rstrip(")") # "0->1" or "0"
+                            
+                            actor_slot_idx = int(slot_info.split("->")[0]) if "->" in slot_info else int(slot_info)
+                            target_slot_idx = int(slot_info.split("->")[1]) if "->" in slot_info else None
+                            
+                            # このスロットのポケモン
+                            if actor_slot_idx < len(active_pokemon):
+                                actor_mon = active_pokemon[actor_slot_idx]
+                                if not actor_mon or actor_mon.fainted:
+                                    continue
+                                    
+                                actor_name = actor_mon.species.capitalize()
+                                if actor_name not in mcts_probs:
+                                    mcts_probs[actor_name] = {}
+                                
+                                # アクション名の整形
+                                action_display = action_raw.title().replace("_", "")
+                                
+                                # ターゲットの解決 (ターゲットインデックスがある場合)
+                                if target_slot_idx is not None:
+                                    # poke-env: 1, 2 refer to opponent slots?
+                                    # MCTS description conversion logic in HybridStrategist used manual string formatting
+                                    # Check how HybridStrategist formats descriptions.
+                                    # Usually: "move_id (slot actor->target)"
+                                    # target index depends on the perspective.
+                                    # For P1, normal target 1/2 means opponent 1/2.
+                                    
+                                    # 対戦相手のリスト
+                                    opponents = battle.opponent_active_pokemon if is_p1 else battle.active_pokemon
+                                    
+                                    # target_slot_idx: 1 or 2 (likely 1-based index)
+                                    # need to verify MCTS implementation. Assuming 1-based index for opponent.
+                                    opp_idx = target_slot_idx - 1
+                                    if 0 <= opp_idx < len(opponents):
+                                        target_mon = opponents[opp_idx]
+                                        target_name = target_mon.species.capitalize() if target_mon else "None"
+                                        action_display += f" → {target_name}"
+                                    else:
+                                        # Target might be -1 or -2 for self/ally?
+                                        if target_slot_idx == -1:
+                                            action_display += " → 自分"
+                                        elif target_slot_idx == -2:
+                                            action_display += " → 味方"
+                                        else:
+                                            action_display += f" → Slot{target_slot_idx}"
+                                
+                                # 確率加算
+                                current_prob = mcts_probs[actor_name].get(action_display, 0.0)
+                                mcts_probs[actor_name][action_display] = current_prob + prob
+                        except:
+                            continue
+
+        # ポケモンごとに結果を生成 (MCTS or Heuristic)
         for i, pokemon in enumerate(active_pokemon):
             if pokemon is None or pokemon.fainted:
                 continue
             
             poke_name = pokemon.species.capitalize()
             predictions[poke_name] = {}
+            
+            # MCTSの結果があればそれを使用
+            if poke_name in mcts_probs and mcts_probs[poke_name]:
+                predictions[poke_name] = mcts_probs[poke_name]
+                continue
+            
+            # フォールバック: ヒューリスティック計算 (従来のロジック)
             action_scores = {}
             
             # 利用可能な技を取得
             available_moves = []
             if is_p1 and i < len(battle.available_moves):
                 available_moves = battle.available_moves[i]
-            
-            # ポケモンの既知技も使用
             if not available_moves and pokemon.moves:
                 available_moves = list(pokemon.moves.values())
             
-            # 相手のポケモン名を取得
+            # 相手のポケモン名
             opponent_names = []
-            for opp in battle.opponent_active_pokemon:
+            opponents = battle.opponent_active_pokemon if is_p1 else battle.active_pokemon
+            for opp in opponents:
                 if opp and not opp.fainted:
                     opponent_names.append(opp.species.capitalize())
             
-            # 技ごとにスコアを計算
             for move in available_moves:
                 move_id = move.id if hasattr(move, 'id') else str(move)
                 base_power = move.base_power if hasattr(move, 'base_power') and move.base_power else 50
                 target_type = str(move.target) if hasattr(move, 'target') else "normal"
                 
-                # ターゲットタイプに応じて行動を追加
                 is_spread_move = "allAdjacentFoes" in target_type or "allAdjacent" in target_type or "ALL" in target_type.upper()
                 is_single_target = "normal" in target_type.lower() or "any" in target_type.lower() or "NORMAL" in target_type
                 is_self_move = "self" in target_type.lower() or "allySide" in target_type or "SELF" in target_type.upper()
                 
                 if is_spread_move:
-                    # 全体技
                     action_name = f"{move_id.title()}"
                     action_scores[action_name] = base_power * 1.1
                 elif is_single_target and opponent_names:
-                    # 単体技 - 各ターゲットごとに実際のポケモン名で表示
+                    # 単体技 - 各ターゲットごとにエントリー作成
                     for opp_name in opponent_names:
                         action_name = f"{move_id.title()} → {opp_name}"
-                        action_scores[action_name] = base_power
+                        # ターゲット分散 (確率を割る)
+                        action_scores[action_name] = base_power / len(opponent_names)
                 elif is_self_move:
-                    # 自分対象・味方全体
                     action_name = f"{move_id.title()}"
-                    # Protectなどは低スコア
                     if move_id in ["protect", "detect", "spikyshield"]:
                         action_scores[action_name] = 30
                     else:
@@ -721,12 +943,11 @@ class VGCAIPlayer(Player):
                     action_name = f"{move_id.title()}"
                     action_scores[action_name] = base_power
             
-            # 交代選択肢を追加
+            # 交代
             if is_p1 and i < len(battle.available_switches):
                 for switch in battle.available_switches[i]:
                     if switch and not switch.fainted:
                         action_name = f"交代 → {switch.species.capitalize()}"
-                        # 交代は控えめなスコア
                         action_scores[action_name] = 40
             
             # 正規化
