@@ -114,8 +114,8 @@ async def main():
     parser.add_argument(
         "--format",
         type=str,
-        default="gen9vgc2026regf",
-        help="Battle format (default: gen9vgc2026regf)"
+        default="gen9vgc2026regfbo3",  # Bo3 = Open Team Sheet有効
+        help="Battle format (default: gen9vgc2026regfbo3)"
     )
     parser.add_argument(
         "--team",
