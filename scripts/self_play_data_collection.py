@@ -137,6 +137,22 @@ class DataCollectorPlayer(Player):
     
     def _create_turn_log(self, battle: DoubleBattle) -> Dict[str, Any]:
         """ターンログを作成"""
+        # weather は dict（キー=天候タイプ、値=残りターン）
+        weather = None
+        if battle.weather:
+            if isinstance(battle.weather, dict):
+                weather = list(battle.weather.keys())[0] if battle.weather else None
+            else:
+                weather = str(battle.weather)
+        
+        # fields も同様に dict の可能性
+        fields = []
+        if battle.fields:
+            if isinstance(battle.fields, dict):
+                fields = list(battle.fields.keys())
+            else:
+                fields = [str(f) for f in battle.fields]
+        
         log = {
             "turn": battle.turn,
             "self_state": {
@@ -150,8 +166,8 @@ class DataCollectorPlayer(Player):
                 "status": [p.status.name if p and p.status else None for p in battle.opponent_active_pokemon],
                 "species": [p.species if p else None for p in battle.opponent_active_pokemon],
             },
-            "weather": battle.weather.name if battle.weather else None,
-            "fields": [f.name for f in battle.fields] if battle.fields else [],
+            "weather": weather,
+            "fields": fields,
         }
         return log
     
@@ -263,29 +279,53 @@ class SelfPlayManager:
     
     async def _run_single_game(self, game_id: int) -> Dict:
         """1試合を実行"""
-        # 2つのプレイヤーを作成
+        import time
+        from poke_env.ps_client.server_configuration import LocalhostServerConfiguration
+        
+        timestamp = int(time.time() * 1000) % 100000  # ユニークなサフィックス
+        
+        # 2つのプレイヤーを作成（LocalhostServerConfiguration を使用）
         player1 = DataCollectorPlayer(
-            account_configuration=AccountConfiguration(f"SelfPlay1_{game_id}", None),
-            server_configuration=ServerConfiguration("localhost:8000", None),
+            account_configuration=AccountConfiguration(f"SP1_{game_id}_{timestamp}", None),
+            server_configuration=LocalhostServerConfiguration,
             battle_format=self.format,
             team=self.team,
             max_concurrent_battles=1,
         )
         
         player2 = DataCollectorPlayer(
-            account_configuration=AccountConfiguration(f"SelfPlay2_{game_id}", None),
-            server_configuration=ServerConfiguration("localhost:8000", None),
+            account_configuration=AccountConfiguration(f"SP2_{game_id}_{timestamp}", None),
+            server_configuration=LocalhostServerConfiguration,
             battle_format=self.format,
             team=self.team,
             max_concurrent_battles=1,
         )
         
         try:
-            # 対戦実行
-            await player1.battle_against(player2, n_battles=1)
+            # 対戦実行（battle_against を使用）
+            await asyncio.wait_for(
+                player1.battle_against(player2, n_battles=1),
+                timeout=300  # 5分タイムアウト（延長）
+            )
+            status = "success"
+            error_msg = None
+        
+        except asyncio.TimeoutError:
+            status = "timeout"
+            error_msg = "Timeout after 300s"
+            print(f"  [Game {game_id}] Timeout")
+        
+        except Exception as e:
+            status = "error"
+            error_msg = str(e) if str(e) else type(e).__name__
+            print(f"  [Game {game_id}] Error: {error_msg}")
+        
+        finally:
+            # 例外発生時も部分的なログを収集
+            print(f"  [Game {game_id}] Collecting logs... P1: {len(player1.battle_logs)} battles")
             
-            # ログを収集
             for battle_id, logs in player1.battle_logs.items():
+                print(f"    Battle {battle_id}: {len(logs)} turns")
                 winner = player1.winners.get(battle_id, "unknown")
                 battle_data = {
                     "battle_id": battle_id,
@@ -294,6 +334,7 @@ class SelfPlayManager:
                     "winner": winner,
                     "turns": logs,
                     "timestamp": datetime.now().isoformat(),
+                    "status": status,
                 }
                 self.all_logs.append(battle_data)
                 
@@ -301,11 +342,8 @@ class SelfPlayManager:
                 log_file = self.output_dir / f"game_{game_id}.json"
                 with open(log_file, 'w') as f:
                     json.dump(battle_data, f, indent=2, ensure_ascii=False)
-            
-            return {"game_id": game_id, "status": "success"}
         
-        except Exception as e:
-            return {"game_id": game_id, "status": "error", "error": str(e)}
+        return {"game_id": game_id, "status": status, "error": error_msg}
     
     def save_training_data(self, output_path: str = "data/training_data.pkl"):
         """学習用データを保存"""

@@ -1,0 +1,33 @@
+# 環境変数（APIキーなど）
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+ENV/
+
+# モデルファイル（大きいので除外する場合）
+# models/*.pkl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# ログ
+*.log
+logs/
+
+# 一時ファイル
+tmp/
+temp/

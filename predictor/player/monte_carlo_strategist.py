@@ -93,7 +93,8 @@ class MonteCarloStrategist:
         max_turns: int = 50,
         use_heuristic: bool = True,
         random_seed: Optional[int] = None,
-        use_damage_calc: bool = False  # Phase 1: ダメージ計算は簡易版
+        use_damage_calc: bool = False,  # Phase 1: ダメージ計算は簡易版
+        use_opponent_model: bool = True  # Priority 3: 相手行動予測を使用
     ):
         """
         Args:
@@ -102,11 +103,13 @@ class MonteCarloStrategist:
             use_heuristic: ヒューリスティック評価を使用するか
             random_seed: 再現性のための乱数シード
             use_damage_calc: smogon_calc_wrapper を使用するか (Phase 2以降)
+            use_opponent_model: 相手行動予測を使用するか (Priority 3)
         """
         self.n_rollouts = n_rollouts
         self.max_turns = max_turns
         self.use_heuristic = use_heuristic
         self.use_damage_calc = use_damage_calc
+        self.use_opponent_model = use_opponent_model
         
         if random_seed is not None:
             random.seed(random_seed)
@@ -121,6 +124,15 @@ class MonteCarloStrategist:
                 self.damage_calc = SmogonCalcWrapper()
             except Exception:
                 pass  # Fallback to simple damage
+        
+        # Priority 3: 相手行動予測モデル
+        self.opponent_model = None
+        if use_opponent_model:
+            try:
+                from src.domain.services.opponent_model import get_opponent_model
+                self.opponent_model = get_opponent_model()
+            except ImportError:
+                pass  # OpponentModelが利用不可
         
         # 統計情報
         self.total_simulations = 0
@@ -251,6 +263,15 @@ class MonteCarloStrategist:
                 # 合法手がない = 引き分け (稀)
                 return "player_a" if random.random() < 0.5 else "player_b", turns
             
+            # ============= Priority 3: OpponentModel による相手行動サンプリング =============
+            # 相手の行動を確率的にサンプリング（Protect/交代を現実的な確率で）
+            opp_action_modifier = None
+            if self.opponent_model and self.use_opponent_model:
+                try:
+                    opp_action_modifier = self._sample_opponent_action(current_state)
+                except Exception:
+                    pass  # 失敗時はデフォルト動作
+            
             # ActionCandidate リストを作成してスコアリング
             action_candidates = self._convert_to_action_candidates(legal_actions)
             if action_candidates and self.use_heuristic:
@@ -263,6 +284,10 @@ class MonteCarloStrategist:
             else:
                 selected_action = random.choice(legal_actions)
             
+            # 相手行動を OpponentModel の結果で上書き
+            if opp_action_modifier:
+                selected_action = self._apply_opponent_modifier(selected_action, opp_action_modifier)
+            
             current_state = self._apply_action(current_state, selected_action)
             turns += 1
         
@@ -274,6 +299,55 @@ class MonteCarloStrategist:
             winner = "player_a" if random.random() < 0.5 else "player_b"
         
         return winner, turns
+    
+    def _sample_opponent_action(self, state: BattleState) -> Optional[Dict[str, Any]]:
+        """
+        OpponentModel を使って相手の行動をサンプリング
+        
+        Returns:
+            {"protect": [False, True], "switch": [False, False]} など
+        """
+        if not self.opponent_model:
+            return None
+        
+        result = {"protect": [False, False], "switch": [False, False]}
+        
+        # 各スロットの相手ポケモンについて予測
+        for slot, poke in enumerate(state.player_b.active[:2]):
+            if not poke or poke.hp_fraction <= 0:
+                continue
+            
+            # Protect確率をサンプリング
+            # OpponentModelはpoke-env形式を期待するが、ここでは簡易的に確率だけ使う
+            protect_prob = 0.15  # 基本確率
+            switch_prob = 0.1
+            
+            # Protect判定
+            if random.random() < protect_prob:
+                result["protect"][slot] = True
+            
+            # 交代判定（Protectしなかった場合のみ）
+            if not result["protect"][slot] and random.random() < switch_prob:
+                result["switch"][slot] = True
+        
+        return result
+    
+    def _apply_opponent_modifier(self, action: TurnAction, modifier: Dict[str, Any]) -> TurnAction:
+        """相手行動をOpponentModelの結果で修正"""
+        import copy
+        modified = copy.deepcopy(action)
+        
+        # Player B の行動を修正
+        for slot, should_protect in enumerate(modifier.get("protect", [])):
+            if should_protect and slot < len(modified.player_b_actions):
+                modified.player_b_actions[slot] = Action(
+                    type="move",
+                    pokemon_slot=slot + 2,  # Player Bは2,3
+                    move_name="protect",
+                    target_slot=None
+                )
+        
+        return modified
     
     def _get_legal_actions(self, state: BattleState) -> List[TurnAction]:
         """
@@ -400,10 +474,19 @@ class MonteCarloStrategist:
             return 0.1
             
         # 簡易的に物理/特殊を高い方で採用
-        atk = max(attacker.attack, attacker.special_attack)
+        # PokemonBattleState は stats 辞書を持つ可能性がある
+        atk = 100  # デフォルト
+        if hasattr(attacker, 'stats') and attacker.stats:
+            atk = max(attacker.stats.get('atk', 100), attacker.stats.get('spa', 100))
+        elif hasattr(attacker, 'attack'):
+            atk = max(attacker.attack, attacker.special_attack)
         
         # 防御力
-        def_stat = min(defender.defense, defender.special_defense)
+        def_stat = 100  # デフォルト
+        if hasattr(defender, 'stats') and defender.stats:
+            def_stat = min(defender.stats.get('def', 100), defender.stats.get('spd', 100))
+        elif hasattr(defender, 'defense'):
+            def_stat = min(defender.defense, defender.special_defense)
         if def_stat == 0: def_stat = 1
         
         # Move Data

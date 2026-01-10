@@ -88,6 +88,13 @@ class SmogonCalcWrapper:
             bufsize=1
         )
         
+        # ===== メモ化キャッシュ =====
+        # key: (attacker, defender, move, tera_a, tera_d, field_hash)
+        # value: SmogonDamageResult
+        self._cache: Dict[tuple, 'SmogonDamageResult'] = {}
+        self._cache_hits = 0
+        self._cache_misses = 0
+        
         # 起動確認 (短時間待機)
         import time
         time.sleep(0.3)  # Node.jsの起動待ち
@@ -106,9 +113,11 @@ class SmogonCalcWrapper:
         field: Optional[Dict] = None,
         attacker_level: int = 50,
         defender_level: int = 50,
+        attacker_tera_type: Optional[str] = None,  # テラスタイプ（テラス時のみ）
+        defender_tera_type: Optional[str] = None,  # テラスタイプ（テラス時のみ）
     ) -> SmogonDamageResult:
         """
-        @smogon/calc でダメージ計算を実行。
+        @smogon/calc でダメージ計算を実行（メモ化キャッシュ付き）。
         
         Args:
             attacker_name: 攻撃側のポケモン名
@@ -123,10 +132,36 @@ class SmogonCalcWrapper:
             field: 場の状態 (天候、フィールドなど)
             attacker_level: 攻撃側のレベル
             defender_level: 防御側のレベル
+            attacker_tera_type: 攻撃側のテラスタイプ（テラスタル時のみ）
+            defender_tera_type: 防御側のテラスタイプ（テラスタル時のみ）
             
         Returns:
             SmogonDamageResult: 計算結果
+            
+        Note:
+            テラスタル火力補正:
+            - タイプ不一致テラス: 元タイプ1.5倍 / テラスタイプ1.5倍
+            - タイプ一致テラス: 元タイプ＝テラスタイプなら2.0倍
         """
+        # ===== メモ化キャッシュキー生成 =====
+        field_hash = str(sorted(field.items())) if field else ""
+        evs_a = str(sorted(attacker_spread.evs.items()))
+        evs_d = str(sorted(defender_spread.evs.items()))
+        
+        cache_key = (
+            attacker_name, attacker_spread.nature, evs_a, attacker_item, attacker_ability, attacker_tera_type,
+            defender_name, defender_spread.nature, evs_d, defender_item, defender_ability, defender_tera_type,
+            move_name, field_hash
+        )
+        
+        # キャッシュヒットチェック
+        if cache_key in self._cache:
+            self._cache_hits += 1
+            return self._cache[cache_key]
+        
+        self._cache_misses += 1
+        
+        # ===== 実際の計算 =====
         request = {
             "attacker": {
                 "name": attacker_name,
@@ -136,7 +171,7 @@ class SmogonCalcWrapper:
                 "item": attacker_item,
                 "ability": attacker_ability,
                 "level": attacker_level,
-                "teraType": None
+                "teraType": attacker_tera_type  # テラスタイプを渡す
             },
             "defender": {
                 "name": defender_name,
@@ -146,7 +181,7 @@ class SmogonCalcWrapper:
                 "item": defender_item,
                 "ability": defender_ability,
                 "level": defender_level,
-                "teraType": None
+                "teraType": defender_tera_type  # テラスタイプを渡す
             },
             "move": move_name,
             "field": field or {}
@@ -174,7 +209,7 @@ class SmogonCalcWrapper:
                 error=response.get("error", "Unknown error")
             )
         
-        return SmogonDamageResult(
+        result = SmogonDamageResult(
             damage=response["damage"],
             damage_range=response["damageRange"],
             description=response["description"],
@@ -183,6 +218,11 @@ class SmogonCalcWrapper:
             max_percent=response["maxPercent"],
             defender_max_hp=response["defender"]["maxHP"]
         )
+        
+        # ===== キャッシュに保存 =====
+        self._cache[cache_key] = result
+        
+        return result
     
     def close(self):
         """Node.jsプロセスを終了。"""

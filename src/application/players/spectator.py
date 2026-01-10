@@ -287,6 +287,44 @@ class Spectator(Player):
             legal_actions=legal_actions
         )
 
+    async def _broadcast_state(self, battle: Battle, prediction):
+        """
+        現在の状態をMessageBroker経由でブロードキャスト
+        """
+        try:
+            from src.infrastructure.messaging.broker import get_message_broker
+            broker = get_message_broker()
+            
+            p1_win = prediction.p1_win_rate
+            
+            # 手持ち情報の抽出（簡易）
+            p1_team = []
+            p2_team = []
+            # 観戦モードでのチーム情報取得は難しいが、わかる範囲で
+            
+            message = {
+                "type": "game_update",
+                "data": {
+                    "turn": battle.turn,
+                    "winRate": p1_win,  # 0.0-1.0
+                    "p1": {
+                        "name": self.target_player,
+                        "rating": getattr(battle, "rating", 1500), # rating属性は無いかも
+                        "pokemon": p1_team
+                    },
+                    "p2": {
+                        "name": "Opponent",
+                        "rating": 1500,
+                        "pokemon": p2_team
+                    }
+                }
+            }
+            
+            await broker.broadcast(message)
+            
+        except Exception as e:
+            print(f"Broadcast Error: {e}")
+
     def _print_commentary(self, battle: Battle, prediction):
         """
         実況コメントを表示
@@ -305,6 +343,9 @@ class Spectator(Player):
             print(f"⚠️ {self.target_player} がピンチです...")
         else:
             print(f"⚖️ 互角の戦いです。")
+            
+        # WebSocket放送 (非同期実行のためにensure_future)
+        asyncio.create_task(self._broadcast_state(battle, prediction))
 
     async def run_loop(self):
         """
@@ -316,4 +357,5 @@ class Spectator(Player):
         # 無限ループで待機（親クラスの処理が必要なら適宜）
         while True:
             await asyncio.sleep(1)
+
 

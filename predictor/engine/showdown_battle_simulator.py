@@ -13,8 +13,14 @@ from typing import Any, Dict, List, Optional
 try:
     from poke_env.player import Player
     from poke_env.environment.battle import Battle
-    from poke_env.environment.pokemon import Pokemon
-    from poke_env.environment.move import Move
+    try:
+        from poke_env.environment.pokemon import Pokemon
+    except ImportError:
+        from poke_env.battle import Pokemon  # 新しいpoke-envバージョン
+    try:
+        from poke_env.environment.move import Move
+    except ImportError:
+        from poke_env.battle import Move  # 新しいpoke-envバージョン
 
     POKE_ENV_AVAILABLE = True
 except ImportError:

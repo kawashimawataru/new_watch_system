@@ -17,15 +17,26 @@ from predictor.core.models import (
 
 
 class HeuristicEvaluator:
-    """Implements the plan described as Algorithm A in the spec."""
+    """
+    Implements the plan described as Algorithm A in the spec.
+    
+    Phase D 統合: 脅威度評価とプラン遂行度スコアを追加
+    """
 
-    def __init__(self, weights: Dict[str, float] | None = None):
+    def __init__(
+        self,
+        weights: Dict[str, float] | None = None,
+        game_plan = None  # Phase D: GamePlan 参照
+    ):
         self.weights = weights or {
             "hp": 3.0,
             "status": 0.75,
             "reserves": 0.5,
             "speed": 0.25,
             "field": 0.4,
+            # Phase D: 新規追加
+            "threat": 1.0,        # 脅威度評価
+            "plan_progress": 0.8,  # プラン遂行度
         }
         self.tag_bonus = {
             "protect": 0.5,
@@ -35,6 +46,9 @@ class HeuristicEvaluator:
             "boost": 0.3,
             "pivot": 0.25,
         }
+        
+        # Phase D: GamePlan 参照
+        self.game_plan = game_plan
 
     def evaluate(self, battle_state: BattleState) -> EvaluationResult:
         """Return win rates and action suggestions for both players."""
@@ -52,6 +66,13 @@ class HeuristicEvaluator:
         )
 
     def _state_value(self, state: BattleState) -> float:
+        """
+        盤面価値を計算
+        
+        Phase D 統合:
+        - 脅威度評価: 相手の主要脅威が残っているほど不利
+        - プラン遂行度: 自分のKOターゲットを処理できているほど有利
+        """
         hp_a = sum(p.hp_fraction for p in state.player_a.active)
         hp_b = sum(p.hp_fraction for p in state.player_b.active)
         reserves_a = len(state.player_a.reserves)
@@ -74,6 +95,52 @@ class HeuristicEvaluator:
         value += self.weights["speed"] * (speed_a - speed_b)
         value += self.weights["field"] * field_bonus
         value += state.player_a.score_bias - state.player_b.score_bias
+        
+        # ============= Phase D: 脅威度評価 =============
+        # 相手の主要脅威が残っているほど不利
+        if self.game_plan and hasattr(self.game_plan, 'primary_threats'):
+            threat_penalty = 0.0
+            for threat_name in self.game_plan.primary_threats:
+                # 相手のアクティブ・控えに脅威がいるかチェック
+                threat_alive = False
+                for p in state.player_b.active:
+                    if p.name.lower() == threat_name.lower() and p.hp_fraction > 0:
+                        # 脅威がアクティブで高HPなら大きなペナルティ
+                        threat_penalty += p.hp_fraction * 0.5
+                        threat_alive = True
+                        break
+                
+                if not threat_alive:
+                    for p in state.player_b.reserves:
+                        if hasattr(p, 'name') and p.name.lower() == threat_name.lower():
+                            threat_penalty += 0.3  # 控えに脅威
+                            break
+            
+            value -= self.weights.get("threat", 1.0) * threat_penalty
+        
+        # ============= Phase D: プラン遂行度スコア =============
+        # KOターゲットを処理できているほど有利
+        if self.game_plan and hasattr(self.game_plan, 'ko_routes'):
+            plan_progress = 0.0
+            for target_name in self.game_plan.ko_routes.keys():
+                # ターゲットが倒れているかチェック
+                target_defeated = True
+                for p in state.player_b.active:
+                    if p.name.lower() == target_name.lower() and p.hp_fraction > 0:
+                        target_defeated = False
+                        break
+                
+                if target_defeated:
+                    for p in state.player_b.reserves:
+                        if hasattr(p, 'name') and p.name.lower() == target_name.lower():
+                            target_defeated = False
+                            break
+                
+                if target_defeated:
+                    plan_progress += 0.5  # ターゲット処理完了
+            
+            value += self.weights.get("plan_progress", 0.8) * plan_progress
+        
         return value
 
     def _score_actions(self, player_label: str, state: BattleState) -> List[PokemonRecommendation]:

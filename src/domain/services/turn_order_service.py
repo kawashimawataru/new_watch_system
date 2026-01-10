@@ -7,7 +7,13 @@ Turn Order Service - 行動順序予測サービス
 """
 
 from typing import List, Tuple, Dict, Optional, Any
-from poke_env.environment.pokemon import Pokemon
+try:
+    from poke_env.environment.pokemon import Pokemon
+except ImportError:
+    try:
+        from poke_env.battle import Pokemon
+    except ImportError:
+        Pokemon = None
 from poke_env.environment.double_battle import DoubleBattle
 
 class TurnOrderService:

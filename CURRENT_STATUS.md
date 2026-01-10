@@ -1,268 +1,344 @@
-# VGC AI Battle System - 現状サマリ
+# VGC AI System - 現在のステータス
 
-**最終更新**: 2025-12-29 18:22 JST
+**最終更新**: 2025-12-31 17:55
 
 ---
 
-## 🎯 プロジェクト概要
+## 📊 プロジェクト概要
 
-**VGC AI Battle System** は、ポケモンVGC（Video Game Championships）のダブルバトルに対応したAIプレイヤーシステムです。
+VGCダブルバトル（ポケモン対戦）においてAIが最適な行動を選択するシステム。
 
 ### 主な機能
-1. **VGC AIプレイヤー** - 人間のチャレンジを受けて自動対戦
-2. **勝率予測** - ターン毎にAI/相手両方の勝率を表示
-3. **行動予測** - 各ポケモンの予測行動と確率をダブルバトル形式で表示
-4. **Open Team Sheet対応** - Bo3フォーマットで相手の技が見える
+
+| 機能 | 説明 |
+|---|---|
+| **行動予測** | MCTS + Quantal Response による最適行動選択 |
+| **勝率計算** | ゲーム理論に基づいた勝率予測 |
+| **戦略アドバイス** | LLMによる戦略的判断サポート |
+| **試合記録** | SQLiteに全試合データを蓄積 |
 
 ---
 
-## 📁 ディレクトリ構造
+## 🚀 クイックスタート
 
-```
-new_watch_game_system/
-│
-├── 🎮 frontend/                    # プレゼンテーション層
-│   ├── vgc_ai_player.py           # ★ メインAIプレイヤー
-│   └── spectator.py               # 観戦システム
-│
-├── 🧠 predictor/                   # コア予測エンジン（安定版）
-│   ├── player/                    # ストラテジスト実装
-│   │   ├── hybrid_strategist.py   # Fast-Lane + MCTS統合
-│   │   ├── fast_strategist.py     # LightGBM即時推論
-│   │   └── monte_carlo_strategist.py # Pure MCTS
-│   ├── core/                      # モデル・評価関数
-│   │   ├── models.py              # BattleState, ActionCandidate等
-│   │   └── eval_algorithms/       # 評価アルゴリズム
-│   └── engine/                    # 外部連携
-│       └── smogon_calc_wrapper.py # ダメージ計算
-│
-├── 🚀 scripts/                     # エントリーポイント
-│   ├── run_vgc_ai.py              # ★ AI起動スクリプト
-│   └── run_battle_spectator.py    # 観戦起動スクリプト
-│
-├── 📊 models/                      # 学習済みモデル
-│   └── fast_lane.pkl              # LightGBMモデル
-│
-├── 🏗️ src/                         # DDDテンプレート（移行中）
-│   ├── domain/                    # ドメイン層
-│   ├── application/               # アプリケーション層
-│   ├── infrastructure/            # インフラ層
-│   └── ui/                        # UI層
-│
-├── 📚 docs/                        # ドキュメント
-│   ├── TECH_STACK.md              # 技術スタック
-│   └── PROGRESS.md                # 進捗管理
-│
-├── 🎲 pokemon-showdown/            # Showdownサーバー（サブモジュール）
-│
-└── 🐍 .venv/                       # Python仮想環境
+```bash
+# 1. 仮想環境を有効化
+source .venv/bin/activate
+
+# 2. Showdownサーバー起動（別ターミナル）
+cd pokemon-showdown && node pokemon-showdown start
+
+# 3. AI起動
+PYTHONPATH=. python scripts/run_predictor_trial.py
+
+# 4. 対戦を挑む
+# Showdownで: /challenge VGCPred_XXXX gen9vgc2026regfbo3
 ```
 
 ---
 
-## 🔄 ファイル間の依存関係
+## 📈 実装フェーズ
 
-```text
-+-------------------------------------------------------+
-|             Infrastructure / Showdown                 |
-|                                                       |
-|  [ Showdown Server ] <====> [ poke-env Client ]       |
-|          ^                         |                  |
-|          |                         v                  |
-+----------|-------------------------|------------------+
-           |                         |
-           | Websocket               | Battle Message
-           |                         v
-+----------|--------------------------------------------+
-|          |    Application Layer (Frontend)            |
-|          |                                            |
-|          |     +-------------------------+            |
-|          +-----|      VGCAIPlayer        |<-----+     |
-|                +-------------------------+      |     |
-|                             |                   |     |
-|                             | (Future)          |     |
-|   +-------------------+     v           +-------------+
-|   | Spectator System  | ---->           |     OCR     |
-|   | (Switch Capture)  |                 +-------------+
-|   +-------------------+                      ^        |
-+----------------------------------------------|--------+
-                                               |
-+----------------------------------------------|--------+
-|               Domain Layer                   |        |
-|                                              |        |
-|  +------------------+    +----------------+  |        |
-|  | ActionFilterSvc  |    | TurnOrderSvc   |  |        |
-|  +------------------+    +----------------+  |        |
-|           |                      |           |        |
-|           v                      v           |        |
-|  +------------------+    +----------------+  |        |
-|  | Item/Move Models |<---| ShowdownLoader |  |        |
-|  +------------------+    +----------------+  |        |
-+----------------------------------------------|--------+
-        ^            ^                         |
-        |            |                         |
-        |            |                         v
-+-------|------------|----------------------------------+
-|       |            |   Prediction Engine              |
-|       |            |                                  |
-|   +---|------------|--------+      +---------------+  |
-|   | MonteCarloStrategist    |<-----| HybridStrategy|  |
-|   +-------------------------+      +---------------+  |
-|                                            |          |
-|                                            v          |
-|                                    +---------------+  |
-|                                    | FastStrategist|  |
-|                                    | (LightGBM)    |  |
-|                                    +---------------+  |
-+-------------------------------------------------------+
+| Phase | 内容 | 状態 |
+|---|---|---|
+| 1 | 基盤整備（DamageCalc, BattleMemory, OpponentModel） | ✅ |
+| 2 | 上位ロジック（BeliefState, RiskAwareSolver, TacticalMixer） | ✅ |
+| 3 | 試合データベース（SQLite + BattleRecorder） | ✅ |
+| 4 | Protect/テラス反映 | ✅ |
+| 5 | 戦略的判断ロジック（リスク管理） | ✅ |
+| 6 | シミュレーション強化（超高精度版） | ✅ |
+| 7 | 探索最適化（Transposition Table, メモ化, Progressive Widening） | ✅ |
+| 8 | 次世代ロジック（StatParticleFilter, FictitiousPlay, LLM補正, 終盤読み切り） | ✅ |
+
+---
+
+## 🆕 Phase 8: 次世代ロジック（論文ベース）
+
+### 8-1. StatParticleFilter（EV/実数値推定）
+
+**目的**: 相手のEV/実数値をオンラインで推定
+
+**仕組み**:
+1. 各相手ポケモンに K=30 個の「実数値仮説（粒子）」を初期化
+2. 観測（行動順、ダメージ量）で粒子の重みを更新
+3. 平均実数値 or 悲観/楽観（分位点）でダメ計に反映
+
+**ファイル**: `src/domain/services/stat_particle_filter.py`
+
+---
+
+### 8-2. FictitiousPlay（ゲーム理論均衡）
+
+**目的**: Quantal Response を均衡解に近づける
+
+**仕組み**:
+1. Restricted Game（候補集合）を構築
+2. 5〜10 反復で互いの最適応答を更新
+3. 最終混合戦略を返す
+
+**ファイル**: `predictor/core/fictitious_play.py`
+
+---
+
+### 8-3. OpponentModelAdvisor（LLM相手モデル）
+
+**目的**: LLM で相手の行動傾向を推定
+
+**出力**:
+- `protect_probability`: 守る確率
+- `switch_probability`: 交代確率
+- `tau_modifier`: τ調整（相手の読みやすさ）
+
+**ファイル**: `predictor/core/opponent_model_advisor.py`
+
+---
+
+### 8-4. EndgameSolver（終盤読み切り）
+
+**目的**: 残りポケモン ≤3体 で詰み探索
+
+**仕組み**:
+- 頭数/HP比較で有利不利を判定
+- 有利時: secure（安定行動）
+- 不利時: gamble（上振れ狙い）
+
+**ファイル**: `predictor/core/endgame_solver.py`
+
+## 🎯 現在の設定値
+
+### SolverConfig（超高精度版）
+
+| パラメータ | 値 | 説明 |
+|---|---|---|
+| `depth` | **8** | 8ターン先まで探索 |
+| `n_samples` | **500** | 乱数サンプル500回 |
+| `top_k_self` | **80** | 自分の候補80手 |
+| `top_k_opp` | **80** | 相手の候補80手 |
+
+### DeterminizedSolver
+
+| パラメータ | 値 | 説明 |
+|---|---|---|
+| `n_determinizations` | **10** | 仮説サンプル数（論文推奨値） |
+
+### CandidateGenerator（Progressive Widening）
+
+| パラメータ | 値 | 説明 |
+|---|---|---|
+| `progressive_widening` | True | 動的候補数増加 |
+| `base_k` | 15 | 初期候補数 |
+| `widening_interval` | 5 | 5回ごとに増加 |
+| `widening_step` | 5 | 増加量 |
+| `max_k` | 100 | 最大候補数 |
+
+---
+
+## 🔄 探索最適化（Phase 7）
+
+### Transposition Table
+
+**目的**: 同一局面の再計算を回避
+
+**実装**: `predictor/core/game_solver.py`
+
+```python
+# キー: (turn, self_action_key, opp_action_key)
+# 値: utility (float)
+self._transposition_table: Dict[Tuple, float] = {}
+```
+
+**効果**: 同じ行動ペアはキャッシュから返却、計算時間を削減
+
+### DamageCalc メモ化
+
+**目的**: 同じ攻撃計算の再実行を回避
+
+**実装**: `predictor/engine/smogon_calc_wrapper.py`
+
+```python
+# キー: (attacker, defender, move, tera, field)
+# 値: SmogonDamageResult
+self._cache: Dict[tuple, SmogonDamageResult] = {}
+```
+
+### Progressive Widening
+
+**目的**: 探索回数に応じて候補数を動的に増加
+
+**実装**: `predictor/core/candidate_generator.py`
+
+```python
+# n回目の呼び出しで候補数 = base_k + (n // interval) * step
+top_k = min(base_k + additional, max_k)
 ```
 
 ---
 
-## ⚠️ 未解決の課題 / TODO
+## 💾 試合データベース（Phase 3）
 
-1.  ~~**MCTSの精度向上**~~ ✅ **完了** (2025-12-29)
-    -   Guided Playouts 実装（ヒューリスティックに基づく重み付け選択）
-    -   Consistent Action Generation（パニック交代防止）
+### テーブル構成
 
-2.  **勝率予測の精度**
-    -   Fast-Lane (LightGBM) の特徴量が13個と少ない
-    -   より多くの特徴量でモデルを再学習する必要あり
+| テーブル | 内容 |
+|---|---|
+| `battles` | 試合情報、チーム、ゲームプラン、結果 |
+| `turns` | ターンごとの予測・実際の動き |
+| `pokemon_snapshots` | ポケモン詳細（HP、技、状態） |
 
-3.  **選出ロジック**
-    -   現在は先頭4匹固定 (`/team 1234`)
-    -   相手チームを見て選出を最適化する必要あり
+### 記録タイミング
 
-4.  **AlphaZero統合**
-    -   Policy/Value モデルの学習が未完了
+| メソッド | 記録内容 |
+|---|---|
+| `teampreview` | 試合開始（my_team, opp_team, game_plan） |
+| `choose_move` | ターン開始（win_prob, risk_mode, advisor_recommendation） |
 
-5.  **フェーズベースのバトル状態管理機構** (2025-12-29追加)
-    -   現在の状況（チームプレビュー / 通常行動選択 / 強制交代等）を明確に把握
-    -   ターンとフェーズごとに適切な処理を分岐するステートマシンを実装
-    -   `choose_move()`内の分岐を整理し、各フェーズごとに専用のハンドラを用意
-    -   **進捗**: 強制交代 (`force_switch`) の判定ロジックバグを修正済み (2025-12-29)
-
-6.  **poke-env Bo3サポートの問題**
-    -   `game-bestof3-*`メッセージの解析でIndexErrorが発生
-    -   poke-envがBo3フォーマットを完全にサポートしていない可能性
-
-✅ **完了済みのタスク**
-
-*   ~~**行動順序予測**~~ (2025-12-29)
-    -   `TurnOrderService` 実装済み。素早さ、麻痺、スカーフ、追い風などを考慮して攻撃順を表示。
-*   ~~**ターゲット表示改善**~~ (2025-12-29)
-    -   単体技のターゲット（例: `→ Urshifu`）を予測表示に追加。
-*   ~~**強制交代のバグ修正**~~ (2025-12-29)
-    -   `pass` を誤送信するバグを修正。`any(force_switch)` で正しく判定。
-*   ~~**持ち物、特性を踏まえた行動**~~ (2025-12-29)
-    -   `ShowdownDataLoader` 導入、火力補正などを計算ロジックに反映。
-*   ~~**Guided Playouts (Phase 3)**~~ (2025-12-29)
-    -   MCTSシミュレーションでヒューリスティックに基づく重み付け選択を実装。
-*   ~~**KnowledgeService + Consistent Action (Phase 4)**~~ (2025-12-29)
-    -   PokeLLMon 研究に基づく KAG（外部知識活用）とパニック交代防止を実装。
-
----
-
-## 🚀 アーキテクチャ再設計 (2025-12-30)
-
-外部エンジニアフィードバックに基づく根本的な予測ロジック改善。
-
-**前提**: SVダブル・Showdown・オープンチームシート（完全情報）
-
-### ✅ Phase A: 予測ロジック実装（完了）
-
-| 実装 | 状態 | ファイル |
-|------|------|----------|
-| `PredictResult` データクラス | ✅ | `predictor/core/prediction_engine.py` |
-| 候補手生成（Top-K） | ✅ | `ActionGenerator` |
-| Quantal Response 混合戦略 | ✅ | `solve_quantal_game()` |
-| 利得行列 U(a,b) 推定 | ✅ | ヒューリスティック |
-| VGCAIPlayer 統合 | ✅ | 行動分布表示対応 |
-
-### ✅ Phase B: Policy/Value 学習基盤（完了）
-
-| 実装 | 状態 | ファイル |
-|------|------|----------|
-| `StateFeatures`（40次元） | ✅ | `predictor/core/policy_value_learning.py` |
-| `PolicyModel` / `ValueModel` | ✅ | LightGBM ベース |
-| `MetamonTrainer` | ✅ | ログ→学習の統合 |
-| PredictionEngine 統合 | ✅ | 学習Valueあれば自動使用 |
-| Self-Play スクリプト | ✅ | `scripts/self_play_data_collection.py` |
-
-### 🔲 Phase C: AlphaZero型PUCT探索（未着手）
-
-- [ ] PUCT 選択式実装
-- [ ] Value/Policy ネットワーク統合
-- [ ] Self-play 強化ループ
-
-### 🔲 Phase D: LLM活用（未着手）
-
-- [ ] 候補生成補助
-- [ ] KAG で根拠付き説明
-
----
-
-## 📅 完成計画ロードマップ
+### データベースファイル
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│ Week 1: データ収集 & 学習                                        │
-├─────────────────────────────────────────────────────────────────┤
-│ - Self-Play で 500+ 試合分のデータ収集                           │
-│ - PolicyModel / ValueModel 学習                                 │
-│ - 予測精度評価（Top-1/Top-3 精度、ECE）                          │
-└─────────────────────────────────────────────────────────────────┘
-               ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ Week 2: 探索強化 (Phase C)                                       │
-├─────────────────────────────────────────────────────────────────┤
-│ - PUCT実装（AlphaZero式探索）                                    │
-│ - 学習済み Policy で候補生成                                     │
-│ - 学習済み Value で葉評価                                        │
-│ - Self-play → 再学習ループ                                       │
-└─────────────────────────────────────────────────────────────────┘
-               ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ Week 3: 観戦UI & LLM (Phase D)                                   │
-├─────────────────────────────────────────────────────────────────┤
-│ - 行動分布・勝率・根拠をオーバーレイ表示                         │
-│ - KAG で根拠付き説明文生成                                       │
-│ - 配信者向け介入UI                                               │
-└─────────────────────────────────────────────────────────────────┘
-               ↓
-┌─────────────────────────────────────────────────────────────────┐
-│ Week 4: Switch実機観戦（将来）                                   │
-├─────────────────────────────────────────────────────────────────┤
-│ - ScreenReader イベント抽出                                      │
-│ - ObservationState + confidence                                 │
-│ - BeliefState（粒子フィルタ）                                    │
-└─────────────────────────────────────────────────────────────────┘
+data/battles.db
 ```
 
-### 優先度順タスク
+### 技術スタック
 
-| 優先度 | タスク | 所要時間 |
-|--------|--------|----------|
-| 🔴 高 | Self-Play 500試合実行 | 数時間 |
-| 🔴 高 | Policy/Value 学習 | 1日 |
-| 🟡 中 | PUCT 探索実装 | 2-3日 |
-| 🟡 中 | 予測精度評価スクリプト | 1日 |
-| 🟢 低 | LLM 根拠説明 | 2日 |
-| 🟢 低 | Switch観戦対応 | 1週間+ |
+- **DB**: SQLite
+- **ORM**: SQLAlchemy 2.0.45
 
 ---
 
-## 📚 参考研究
+## ⚔️ シミュレーション仕様
 
-| 研究 | 適用箇所 | URL |
-|------|----------|-----|
-| Metamon | Policy/Value学習 | [arXiv:2504.04395](https://arxiv.org/abs/2504.04395) |
-| PokéChamp | minimax + LLM | [arXiv:2503.04094](https://arxiv.org/abs/2503.04094) |
-| PokeLLMon | KAG, パニック抑制 | [arXiv:2402.01118](https://arxiv.org/abs/2402.01118) |
-| PokéAgent | 評価設計 | [pokeagent.github.io](https://pokeagent.github.io/) |
+### テラスタル火力補正
+
+| 条件 | 倍率 |
+|---|---|
+| タイプ不一致テラス（元タイプ技） | 1.5倍 |
+| タイプ不一致テラス（テラスタイプ技） | 1.5倍 |
+| **タイプ一致テラス** | **2.0倍** |
+
+### 2連守確率ペナルティ
+
+| 連続回数 | 成功確率 | 条件 |
+|---|---|---|
+| 1回目 | 100% | なし |
+| 2回目 | 33.3% | 勝率65%以上のみ |
+| 3回目 | 11.1% | 強いペナルティ |
 
 ---
 
-**最終更新**: 2025-12-30 00:30
-**ファイル作成者**: Antigravity (AI Assistant)
+## 🧠 戦略的判断ロジック
 
+### まもる判断
+
+```
+Q1: 守らずに攻撃を受けたら即死か？
+    → YES: 守る（バレバレでも守る）
+    → NO: Q2へ
+
+Q2: 相手のテラス攻撃をスカせる？
+    → YES: 守る価値あり
+```
+
+### テラスタル判断
+
+```
+Q1: テラスなしで弱点技を受けたら即死か？
+    → YES: 迷わずテラス（生存優先）
+    → NO: Q2へ
+
+Q2: 今倒さないと返しで負けるか？
+    → YES: テラス（遂行優先）
+```
+
+### 交代判断
+
+```
+Q1: 交代 vs 居座り、被ダメ比較
+Q2: 交代後の対面は有利か
+Q3: 縛り解除しないか
+```
+
+---
+
+## 📦 主要コンポーネント
+
+### 探索・意思決定
+
+| ファイル | 役割 |
+|---|---|
+| `predictor/core/game_solver.py` | MCTS + Transposition Table |
+| `predictor/core/determinized_solver.py` | 不完全情報対応 (K=10) |
+| `predictor/core/candidate_generator.py` | 候補生成 + Progressive Widening |
+| `predictor/core/risk_aware_solver.py` | Secure/Gamble モード |
+| `predictor/core/turn_advisor.py` | LLMによる戦略アドバイス |
+
+### 情報管理
+
+| ファイル | 役割 |
+|---|---|
+| `src/domain/services/battle_memory.py` | ターン間の状態追跡 |
+| `src/domain/services/belief_state.py` | 隠れ情報の確率管理 |
+| `src/domain/services/player_style.py` | 相手のプレイスタイル推定 |
+
+### データベース
+
+| ファイル | 役割 |
+|---|---|
+| `src/infrastructure/database/models.py` | SQLAlchemy モデル |
+| `src/infrastructure/database/repository.py` | CRUD操作 |
+| `src/application/services/battle_recorder.py` | 試合記録サービス |
+
+### ダメージ計算
+
+| ファイル | 役割 |
+|---|---|
+| `predictor/engine/smogon_calc_wrapper.py` | ダメ計 + メモ化 |
+| `predictor/damage/api.py` | ダメージ計算API |
+
+---
+
+## 📚 論文との整合
+
+| 論文 | 対応機能 |
+|---|---|
+| VGC-Bench | BeliefState, RiskAware |
+| PokéChamp | TurnAdvisor + MCTS |
+| PokeLLMon | ConsistentTurnAdvisor |
+| ISMCTS | DeterminizedSolver (K=10) |
+
+---
+
+## 🔧 環境変数
+
+| 変数 | 必須 | 説明 |
+|---|---|---|
+| `OPENAI_API_KEY` | ✅ | LLM機能に必要 |
+| `PYTHONPATH` | ✅ | `.` を指定 |
+
+---
+
+## 📝 対戦ログ
+
+```
+docs/001_BATTLE_LOG_ANALYSIS_20251231_0425.md
+docs/002_BATTLE_LOG_ANALYSIS_20251231_0521.md
+docs/003_BATTLE_LOG_ANALYSIS_20251231_0603.md
+```
+
+---
+
+## 🎯 次のステップ
+
+| 優先度 | タスク | 状態 |
+|---|---|---|
+| 1 | 試合を実行してデータを蓄積 | 待機中 |
+| 2 | 蓄積データで精度検証（予測 vs 実際） | 未着手 |
+| 3 | Phase 4: Policy/Value Network の学習 | 未着手 |
+
+---
+
+## 🐛 既知の問題
+
+| 問題 | 状態 | 対応 |
+|---|---|---|
+| TurnAdvisor max_hp エラー | ✅ 修正済み | getattr() で安全アクセス |
+| Protect 推奨無視 | ✅ 修正済み | should_protect を反映 |
+| テラス推奨無視 | ✅ 修正済み | should_tera を反映 |
