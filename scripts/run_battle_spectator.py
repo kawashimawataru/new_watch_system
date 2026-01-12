@@ -27,7 +27,7 @@ import sys
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
-from frontend.spectator import Spectator
+from src.application.players.spectator import Spectator
 from poke_env.ps_client.server_configuration import LocalhostServerConfiguration
 from poke_env.ps_client.account_configuration import AccountConfiguration
 

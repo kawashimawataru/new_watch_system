@@ -28,8 +28,8 @@ logging.basicConfig(
 project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(project_root)
 
-# 安定版: frontend から直接インポート
-from frontend.vgc_ai_player import VGCAIPlayer
+# src/application/players からインポート
+from src.application.players.vgc_ai_player import VGCAIPlayer
 
 from poke_env.ps_client.server_configuration import LocalhostServerConfiguration
 from poke_env.ps_client.account_configuration import AccountConfiguration

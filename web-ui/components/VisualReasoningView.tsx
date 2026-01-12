@@ -5,11 +5,14 @@ import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { ShieldAlert, Swords, X, Target } from "lucide-react";
 
+import { BattleConditionsPanel } from "./BattleConditionsPanel";
+
 interface VisualReasoningViewProps {
     p1Pokemon: string[];
     p2Pokemon: string[];
     playerStrategy?: string;
     opponentThreat?: string;
+    fieldConditions?: any; // Phase 25
     className?: string;
     onClose?: () => void;
 }
@@ -19,6 +22,7 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
     p2Pokemon,
     playerStrategy = "分析中...",
     opponentThreat = "相手の動きを予測中...",
+    fieldConditions,
     className,
     onClose
 }) => {
@@ -41,11 +45,16 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
                 </button>
             )}
 
-            <div className="text-center border-b border-white/10 pb-2 mb-2 shadow-sm shrink-0">
+            <div className="text-center border-b border-white/10 pb-2 mb-2 shadow-sm shrink-0 flex flex-col items-center gap-2">
                 <h3 className="text-lg font-bold text-yellow-500 tracking-widest uppercase flex items-center justify-center gap-2">
                     <Swords className="w-5 h-5" />
                     戦術交差図解 (Tactical Diagram)
                 </h3>
+
+                {/* Field Conditions Panel */}
+                {fieldConditions && (
+                    <BattleConditionsPanel conditions={fieldConditions} className="scale-90" />
+                )}
             </div>
 
             <div className="flex-1 flex items-center justify-between gap-16 px-20 relative min-h-0 bg-cyber-grid/20 rounded-lg border border-white/5 my-2">

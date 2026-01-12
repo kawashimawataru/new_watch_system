@@ -22,6 +22,8 @@ interface BroadcastCandidateListProps {
     color?: "red" | "blue";
 }
 
+import { DamagePreviewBadge } from "./DamagePreviewBadge";
+
 export const BroadcastCandidateList: React.FC<BroadcastCandidateListProps> = ({
     candidates,
     className,
@@ -63,8 +65,11 @@ export const BroadcastCandidateList: React.FC<BroadcastCandidateListProps> = ({
                                 )}>
                                     {cand.type1 === "protect" ? "守" : cand.type1 === "switch" ? "交" : "攻"}
                                 </span>
-                                <span className="font-bold text-gray-200 truncate flex-1">
-                                    {cand.move1} {cand.target1 && <span className="text-gray-500 text-[9px]">▶ {cand.target1}</span>}
+                                <span className="font-bold text-gray-200 truncate flex-1 flex items-center gap-2">
+                                    <span>{cand.move1} {cand.target1 && <span className="text-gray-500 text-[9px]">▶ {cand.target1}</span>}</span>
+                                    {/* Phase 25: ダメージプレビュー */}
+                                    {/* @ts-ignore */}
+                                    {cand.damagePreview1 && <DamagePreviewBadge preview={cand.damagePreview1} />}
                                 </span>
                             </div>
 
@@ -79,8 +84,11 @@ export const BroadcastCandidateList: React.FC<BroadcastCandidateListProps> = ({
                                 )}>
                                     {cand.type2 === "protect" ? "守" : cand.type2 === "switch" ? "交" : "攻"}
                                 </span>
-                                <span className="font-bold text-gray-200 truncate flex-1">
-                                    {cand.move2} {cand.target2 && <span className="text-gray-500 text-[9px]">▶ {cand.target2}</span>}
+                                <span className="font-bold text-gray-200 truncate flex-1 flex items-center gap-2">
+                                    <span>{cand.move2} {cand.target2 && <span className="text-gray-500 text-[9px]">▶ {cand.target2}</span>}</span>
+                                    {/* Phase 25: ダメージプレビュー */}
+                                    {/* @ts-ignore */}
+                                    {cand.damagePreview2 && <DamagePreviewBadge preview={cand.damagePreview2} />}
                                 </span>
                             </div>
                         </div>

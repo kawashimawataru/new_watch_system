@@ -1,10 +1,13 @@
+"""
+Spectator - 観戦エージェント
+
+Pokemon Showdownのバトルを観戦し、AIによる分析結果をWebSocket経由で配信します。
+"""
 import asyncio
 import json
-import logging
 import random
 import string
-import sys
-from typing import Optional, Dict
+from typing import Optional, Dict, List, Any
 
 from poke_env.player import Player
 from poke_env.battle import Battle
@@ -17,12 +20,25 @@ from predictor.core.models import (
     PokemonBattleState,
     ActionCandidate
 )
+from src.infrastructure.logging import get_logger
+from src.infrastructure.config import config
+from src.domain.exceptions import SpectatorError, AnalysisError
+
+logger = get_logger("spectator")
+
 
 class Spectator(Player):
+    """
+    観戦エージェント
+    
+    ターゲットプレイヤーのバトルを自動検出して観戦し、
+    各ターンの勝率予測と候補手をWebSocket経由で配信します。
+    """
+    
     def __init__(
         self,
         target_player: str,
-        battle_id: Optional[str] = None,  # 手動でバトルIDを指定可能
+        battle_id: Optional[str] = None,
         account_configuration=None,
         *,
         avatar: Optional[str] = None,
@@ -30,6 +46,18 @@ class Spectator(Player):
         server_configuration=None,
         start_listening: bool = True,
     ):
+        """
+        観戦エージェントを初期化
+        
+        Args:
+            target_player: 観戦対象のプレイヤー名
+            battle_id: 手動でバトルIDを指定する場合
+            account_configuration: アカウント設定
+            avatar: アバター
+            log_level: ログレベル
+            server_configuration: サーバー設定
+            start_listening: 接続を開始するか
+        """
         super().__init__(
             account_configuration=account_configuration,
             avatar=avatar,
@@ -39,7 +67,8 @@ class Spectator(Player):
         )
         self.target_player = target_player
         self.manual_battle_id = battle_id
-        self.watched_battles = set()
+        self.watched_battles: set = set()
+        self._win_rate_history: List[Dict] = []
         
         # 名前重複回避のためにランダムサフィックスを追加
         suffix = ''.join(random.choices(string.ascii_lowercase + string.digits, k=4))
@@ -47,15 +76,16 @@ class Spectator(Player):
         
         # HybridStrategistの初期化
         self.strategist = HybridStrategist(
-            fast_model_path="models/fast_lane.pkl",
-            mcts_rollouts=500,
-            mcts_max_turns=20
+            fast_model_path=config.spectator.fast_model_path,
+            mcts_rollouts=config.spectator.mcts_rollouts,
+            mcts_max_turns=config.spectator.mcts_max_turns
         )
-        print(f"👀 観戦エージェント起動: ターゲット = {self.target_player} (As: {self._custom_username})")
+        
+        logger.info(f"観戦エージェント起動: ターゲット = {self.target_player} (As: {self._custom_username})")
         if self.manual_battle_id:
-            print(f"📍 手動指定バトルID: {self.manual_battle_id}")
+            logger.info(f"手動指定バトルID: {self.manual_battle_id}")
 
-    async def _search_and_join_battles(self):
+    async def _search_and_join_battles(self) -> None:
         """
         定期的にターゲットプレイヤーのバトルを検索して参加する
         """
@@ -65,206 +95,147 @@ class Spectator(Player):
         
         # 手動でバトルIDが指定されている場合、直接参加
         if self.manual_battle_id:
-            print(f"🚀 バトルに参加中: {self.manual_battle_id}")
+            logger.info(f"バトルに参加中: {self.manual_battle_id}")
             await self.ps_client.send_message("", f"/join {self.manual_battle_id}")
             self.watched_battles.add(self.manual_battle_id)
-            return  # 手動指定の場合は検索ループ不要
+            return
         
         # ロビーに参加
         await self.ps_client.send_message("", "/join lobby")
         
         query_idx = 100
+        search_interval = config.spectator.battle_search_interval
+        
         while True:
             try:
-                # クエリを送信（より頻繁に）
                 await self.ps_client.send_message("", f"|/cmd roomlist {query_idx}")
                 await self.ps_client.send_message("", f"|/cmd userdetails {self.target_player}")
                 query_idx += 1
-                
             except Exception as e:
-                print(f"Error searching battles: {e}")
+                logger.warning(f"バトル検索中にエラー: {e}")
             
-            await asyncio.sleep(2)  # 2秒間隔に短縮
+            await asyncio.sleep(search_interval)
 
     def _handle_message(self, message: str) -> None:
         """
-        グローバルメッセージを含む全メッセージを処理 (同期ラッパー)
+        グローバルメッセージを含む全メッセージを処理
+        
+        Args:
+            message: 受信メッセージ
         """
-        # 完全デバッグログ
-        # print(f"RAW RECV: {message}")
-
-        # デバッグ: クエリレスポンスを表示
+        # デバッグ: クエリレスポンスをログ
         if message.startswith("|queryresponse|"):
-            print(f"DEBUG (global): {message[:100]}...")
+            logger.debug(f"Query response: {message[:100]}...")
 
-        # カスタム処理: roomlistのレスポンス解析
+        # roomlistのレスポンス解析
         if message.startswith("|queryresponse|roomlist|"):
-            try:
-                # |queryresponse|roomlist|{...}
-                parts = message.split("|")
-                if len(parts) > 3:
-                     data_str = "|".join(parts[3:]) # JSON部分
-                     data = json.loads(data_str)
-                     
-                     if "rooms" in data:
-                        for room_id, room_data in data["rooms"].items():
-                            p1 = room_data.get("p1", "")
-                            p2 = room_data.get("p2", "")
-                            
-                            target_id = self.target_player.lower().replace(" ", "")
-                            p1_id = p1.lower().replace(" ", "")
-                            p2_id = p2.lower().replace(" ", "")
-                            
-                            if target_id == p1_id or target_id == p2_id:
-                                if room_id.startswith("battle-") and room_id not in self.watched_battles:
-                                    print(f"🔍 バトル発見 (roomlist): {room_id}")
-                                    asyncio.create_task(self.ps_client.send_message("", f"/join {room_id}"))
-                                    self.watched_battles.add(room_id)
-            except Exception as e:
-                print(f"Error parsing roomlist: {e}")
-            return # 処理済みとして戻る（警告抑制のため）
+            self._handle_roomlist_response(message)
+            return
 
-        # カスタム処理: userdetailsのレスポンス解析
+        # userdetailsのレスポンス解析
         if message.startswith("|queryresponse|userdetails|"):
-            try:
-                parts = message.split("|")
-                if len(parts) > 3:
-                    data_str = "|".join(parts[3:])
-                    data = json.loads(data_str)
-                    
-                    # userdetails responses sometimes have "rooms" as a dict: {"battle-gen9randombattle-1": {}}
-                    # or it could be False/None if no rooms
-                    if "rooms" in data and isinstance(data["rooms"], dict):
-                        for room_id in data["rooms"].keys():
-                            if room_id.startswith("battle-") and room_id not in self.watched_battles:
-                                print(f"🔍 バトル発見: {room_id}")
-                                asyncio.create_task(self.ps_client.send_message("", f"/join {room_id}"))
-                                self.watched_battles.add(room_id)
-            except Exception as e:
-                print(f"Error parsing userdetails: {e}")
+            self._handle_userdetails_response(message)
             return
 
         # 親クラスの処理
         super()._handle_message(message)
 
+    def _handle_roomlist_response(self, message: str) -> None:
+        """roomlistレスポンスを処理"""
+        try:
+            parts = message.split("|")
+            if len(parts) > 3:
+                data_str = "|".join(parts[3:])
+                data = json.loads(data_str)
+                
+                if "rooms" in data:
+                    for room_id, room_data in data["rooms"].items():
+                        self._check_and_join_battle(room_id, room_data)
+        except json.JSONDecodeError as e:
+            logger.warning(f"roomlist JSONパースエラー: {e}")
+        except Exception as e:
+            logger.error(f"roomlist処理エラー: {e}", exc_info=True)
+
+    def _handle_userdetails_response(self, message: str) -> None:
+        """userdetailsレスポンスを処理"""
+        try:
+            parts = message.split("|")
+            if len(parts) > 3:
+                data_str = "|".join(parts[3:])
+                data = json.loads(data_str)
+                
+                if "rooms" in data and isinstance(data["rooms"], dict):
+                    for room_id in data["rooms"].keys():
+                        if room_id.startswith("battle-") and room_id not in self.watched_battles:
+                            logger.info(f"バトル発見: {room_id}")
+                            asyncio.create_task(self.ps_client.send_message("", f"/join {room_id}"))
+                            self.watched_battles.add(room_id)
+        except json.JSONDecodeError as e:
+            logger.warning(f"userdetails JSONパースエラー: {e}")
+        except Exception as e:
+            logger.error(f"userdetails処理エラー: {e}", exc_info=True)
+
+    def _check_and_join_battle(self, room_id: str, room_data: dict) -> None:
+        """バトルルームをチェックして参加"""
+        p1 = room_data.get("p1", "")
+        p2 = room_data.get("p2", "")
+        
+        target_id = self.target_player.lower().replace(" ", "")
+        p1_id = p1.lower().replace(" ", "")
+        p2_id = p2.lower().replace(" ", "")
+        
+        if target_id == p1_id or target_id == p2_id:
+            if room_id.startswith("battle-") and room_id not in self.watched_battles:
+                logger.info(f"バトル発見 (roomlist): {room_id}")
+                asyncio.create_task(self.ps_client.send_message("", f"/join {room_id}"))
+                self.watched_battles.add(room_id)
+
     def _handle_battle_message(self, message: str) -> None:
-        """
-        サーバーからのメッセージを処理
-        """
-        # 親クラスの処理（バトル更新など）
+        """バトルメッセージを処理"""
         super()._handle_battle_message(message)
 
-
     def choose_move(self, battle: Battle):
-        """
-        観戦者なので行動は選択しないが、Playerクラスの要件として実装が必要。
-        """
+        """観戦者は行動を選択しない（Playerクラス要件）"""
         return "/choose default"
 
-    async def on_battle_start(self, battle: Battle):
-        print(f"\n{'='*60}")
-        print(f"🎥 観戦開始: {battle.battle_tag}")
-        print(f"   Players: {battle.player_username} vs {battle.opponent_username}")
-        print(f"{'='*60}")
+    async def on_battle_start(self, battle: Battle) -> None:
+        """バトル開始時の処理"""
+        logger.info("=" * 60)
+        logger.info(f"観戦開始: {battle.battle_tag}")
+        logger.info(f"Players: {battle.player_username} vs {battle.opponent_username}")
+        logger.info("=" * 60)
 
-    async def on_battle_end(self, battle: Battle):
-        print(f"\n{'='*60}")
-        print(f"🏁 バトル終了: {battle.battle_tag}")
-        print(f"   Winner: {battle.won}") # 観戦者の場合 won はどうなる？
-        print(f"{'='*60}")
+    async def on_battle_end(self, battle: Battle) -> None:
+        """バトル終了時の処理"""
+        logger.info("=" * 60)
+        logger.info(f"バトル終了: {battle.battle_tag}")
+        logger.info(f"Winner: {battle.won}")
+        logger.info("=" * 60)
 
-    # poke-envのPlayerは on_turn ではなく choose_move が呼ばれるタイミングで思考するが、
-    # 観戦者の場合 choose_move は呼ばれない（はず）。
-    # 代わりに _handle_battle_message 内で update を検知するか、
-    # 定期的にポーリングするか。
-    # 実は poke-env は観戦モード（Playerとして参加していないバトル）の場合、
-    # battle.turn が更新されたタイミングをフックする標準的な方法が薄い。
-    # しかし、Battleオブジェクトは更新される。
-    
-    # 簡易実装: _handle_battle_message をオーバーライドして、ターン終了メッセージなどを検知する。
-    # または、battle.turn が変わったことを検知する。
-    
-    # ここでは、_handle_battle_message で "|turn|" を検知して分析をトリガーする。
-    
-    def _process_battle_message(self, message: str, battle: Battle):
+    def _process_battle_message(self, message: str, battle: Battle) -> None:
+        """バトルメッセージを処理"""
         super()._process_battle_message(message, battle)
         
         # ターン更新を検知
         parts = message.split("|")
         if len(parts) > 1 and parts[1] == "turn":
-            # ターン開始
             self._analyze_turn(battle)
-            
-    def _analyze_turn(self, battle: Battle):
-        """
-        現在のターンを分析して実況する
-        """
-        print(f"\n--- Turn {battle.turn} ---")
+
+    def _analyze_turn(self, battle: Battle) -> None:
+        """現在のターンを分析"""
+        logger.info(f"--- Turn {battle.turn} ---")
         
-        # ターゲットプレイヤーがどちらか特定
-        # battle.player_username は "自分" (Spectator) になる可能性がある？
-        # いや、観戦の場合、battle.player_username は空か、あるいは片方のプレイヤー？
-        # poke-envの実装による。
-        
-        # ターゲットがAかBか判定
-        # battle.player_username / battle.opponent_username は
-        # 観戦の場合、正しく設定されないことが多い。
-        # battle.players などを確認する必要があるかも。
-        
-        # とりあえず BattleState に変換して分析
         try:
             battle_state = self._convert_battle_to_state(battle)
-            
-            # 予測実行
-            # predict_both は同期メソッドとして実装されている（内部でMCTSを呼ぶ）
-            # 非同期で呼びたいが、とりあえず同期で。
             _, slow_result = self.strategist.predict_both(battle_state)
-            
-            # 実況出力
             self._print_commentary(battle, slow_result)
-            
         except Exception as e:
-            print(f"Analysis Error: {e}")
+            logger.error(f"分析エラー: {e}", exc_info=True)
 
     def _convert_battle_to_state(self, battle: Battle) -> BattleState:
-        """
-        Battle -> BattleState 変換
-        ターゲットプレイヤーを Player A (自分視点) として扱う
-        """
-        # プレイヤーの特定
-        # battle.player_role は観戦者の場合 None かも
-        # battle.players は {player_id: player_name} の辞書？
-        # poke-env の Battle オブジェクトの中身を推測
-        
-        # ターゲットプレイヤーを探す
-        p1_name = None
-        p2_name = None
-        
-        # battle.players 属性はないかもしれない。
-        # battle.player_username, battle.opponent_username を使う
-        # 観戦の場合、これらは空文字の可能性がある。
-        
-        # 暫定: ターゲットプレイヤーの名前が含まれている側をAとする
-        # しかし、Battleオブジェクトの情報が不足している場合がある。
-        
-        # ここでは、battle_ai_player.py のロジックを流用しつつ、
-        # ターゲットプレイヤーを優先する。
-        
-        # 仮実装:
+        """Battle -> BattleState 変換"""
         player_a_name = self.target_player
         player_b_name = "Opponent"
-        
-        # 実際には battle オブジェクトから情報を抽出する必要がある
-        # active_pokemon なども、観戦者視点だと battle.active_pokemon (自分) は存在しないかも？
-        # battle.opponent_active_pokemon も...
-        
-        # 観戦モードの poke-env Battle オブジェクトは、
-        # battle.sides などの低レベル情報を持っている可能性がある。
-        # しかし、標準API (active_pokemon) が機能するかは怪しい。
-        
-        # 今回は「動くこと」を優先し、エラーハンドリングを厚くする。
-        
-        # ダミー実装に近い形になるが、構造を作る。
         
         player_a = PlayerState(
             name=player_a_name,
@@ -277,7 +248,6 @@ class Spectator(Player):
             reserves=[]
         )
         
-        # Legal Actions (観戦者にはわからないので空)
         legal_actions = {"A": [], "B": []}
         
         return BattleState(
@@ -287,12 +257,8 @@ class Spectator(Player):
             legal_actions=legal_actions
         )
 
-    async def _broadcast_state(self, battle: Battle, prediction, fast_result=None):
-        """
-        現在の状態をMessageBroker経由でブロードキャスト
-        
-        Phase 15: SpectatorAnalyzerを使用してシミュレーションベースの候補手を生成
-        """
+    async def _broadcast_state(self, battle: Battle, prediction, fast_result=None) -> None:
+        """現在の状態をMessageBroker経由でブロードキャスト"""
         try:
             from src.infrastructure.messaging.broker import get_message_broker
             from src.application.services.spectator_analyzer import get_spectator_analyzer
@@ -307,7 +273,7 @@ class Spectator(Player):
             opponent_bench = self._extract_bench_pokemon(battle, is_player=False)
             field_state = self._extract_field_state(battle)
             
-            # SpectatorAnalyzerで分析（シミュレーションベース）
+            # SpectatorAnalyzerで分析
             analysis = analyzer.analyze(
                 player_active=player_active,
                 opponent_active=opponent_active,
@@ -318,8 +284,6 @@ class Spectator(Player):
             )
             
             # 勝率履歴の記録
-            if not hasattr(self, '_win_rate_history'):
-                self._win_rate_history = []
             self._win_rate_history.append({
                 "turn": battle.turn,
                 "winRate": analysis.win_rate
@@ -335,6 +299,7 @@ class Spectator(Player):
                     "winRate": analysis.win_rate,
                     "winRateHistory": self._win_rate_history,
                     "boardScore": analysis.board_score.total,
+                    "fieldConditions": field_state,
                     "p1": {
                         "name": self.target_player,
                         "rating": getattr(battle, "rating", 1500),
@@ -349,7 +314,7 @@ class Spectator(Player):
                     },
                     "candidates": {
                         "p1": [c.to_dict() for c in analysis.candidates],
-                        "p2": []  # 相手の候補は観戦では生成しない
+                        "p2": []
                     },
                     "explanation": {
                         "playerStrategy": analysis.explanation.recommended_strategy,
@@ -362,38 +327,28 @@ class Spectator(Player):
             }
             
             await broker.broadcast(message)
+            logger.debug(f"ブロードキャスト完了: Turn {battle.turn}")
             
         except Exception as e:
-            print(f"Broadcast Error: {e}")
-            import traceback
-            traceback.print_exc()
-    
-    def _extract_team_info(self, battle: Battle, is_player: bool) -> list:
+            logger.error(f"ブロードキャストエラー: {e}", exc_info=True)
+
+    def _extract_team_info(self, battle: Battle, is_player: bool) -> List[str]:
         """バトルからチーム情報を抽出"""
         team = []
         try:
-            # poke-envのBattleオブジェクトから情報を取得
-            if is_player:
-                pokemon_dict = getattr(battle, 'team', {})
-            else:
-                pokemon_dict = getattr(battle, 'opponent_team', {})
-            
+            pokemon_dict = getattr(battle, 'team' if is_player else 'opponent_team', {})
             for key, pokemon in pokemon_dict.items():
                 name = getattr(pokemon, 'species', 'Unknown')
                 team.append(name)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"チーム情報抽出エラー: {e}")
         return team if team else ["ポケモン1", "ポケモン2", "ポケモン3", "ポケモン4"]
-    
-    def _extract_active_pokemon(self, battle: Battle, is_player: bool) -> list:
+
+    def _extract_active_pokemon(self, battle: Battle, is_player: bool) -> List[Dict[str, Any]]:
         """アクティブポケモンの詳細を抽出"""
         active = []
         try:
-            if is_player:
-                pokemon_list = getattr(battle, 'active_pokemon', [])
-            else:
-                pokemon_list = getattr(battle, 'opponent_active_pokemon', [])
-            
+            pokemon_list = getattr(battle, 'active_pokemon' if is_player else 'opponent_active_pokemon', [])
             if pokemon_list:
                 for poke in pokemon_list:
                     if poke:
@@ -401,49 +356,25 @@ class Spectator(Player):
                             "name": getattr(poke, 'species', 'Unknown'),
                             "hp": getattr(poke, 'current_hp_fraction', 1.0)
                         })
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"アクティブポケモン抽出エラー: {e}")
         return active if active else [{"name": "Unknown", "hp": 1.0}]
-    
-    def _extract_active_pokemon_detailed(self, battle: Battle, is_player: bool) -> list:
-        """アクティブポケモンの詳細情報を抽出（SpectatorAnalyzer用）"""
+
+    def _extract_active_pokemon_detailed(self, battle: Battle, is_player: bool) -> List[Dict[str, Any]]:
+        """アクティブポケモンの詳細情報を抽出"""
         active = []
         try:
-            if is_player:
-                pokemon_list = getattr(battle, 'active_pokemon', [])
-            else:
-                pokemon_list = getattr(battle, 'opponent_active_pokemon', [])
+            pokemon_list = getattr(battle, 'active_pokemon' if is_player else 'opponent_active_pokemon', [])
             
             if pokemon_list:
                 for poke in pokemon_list:
                     if poke and not getattr(poke, 'fainted', False):
-                        # タイプ情報を抽出
-                        types = []
-                        if hasattr(poke, 'types') and poke.types:
-                            types = [t.name.capitalize() if hasattr(t, 'name') else str(t) for t in poke.types if t]
-                        if not types:
-                            types = ["Normal"]
-                        
-                        # 技情報を抽出
-                        moves = []
-                        if hasattr(poke, 'moves') and poke.moves:
-                            for move_id, move_obj in poke.moves.items():
-                                move_name = getattr(move_obj, 'id', move_id)
-                                move_type = getattr(move_obj, 'type', None)
-                                type_name = move_type.name.capitalize() if move_type and hasattr(move_type, 'name') else "Normal"
-                                moves.append({
-                                    "name": move_name,
-                                    "type": type_name
-                                })
-                        if not moves:
-                            moves = [{"name": "技", "type": "Normal"}]
-                        
+                        # タイプ情報
+                        types = self._extract_types(poke)
+                        # 技情報
+                        moves = self._extract_moves(poke)
                         # 素早さ情報
-                        speed = 100
-                        if hasattr(poke, 'stats') and poke.stats and 'spe' in poke.stats:
-                            speed = poke.stats['spe']
-                        elif hasattr(poke, 'base_stats') and poke.base_stats and 'spe' in poke.base_stats:
-                            speed = poke.base_stats['spe']
+                        speed = self._extract_speed(poke)
                         
                         active.append({
                             "name": getattr(poke, 'species', 'Unknown'),
@@ -454,9 +385,8 @@ class Spectator(Player):
                             "fainted": getattr(poke, 'fainted', False),
                         })
         except Exception as e:
-            print(f"_extract_active_pokemon_detailed error: {e}")
+            logger.debug(f"詳細ポケモン情報抽出エラー: {e}")
         
-        # フォールバック
         if not active:
             active = [{
                 "name": "Unknown",
@@ -467,32 +397,46 @@ class Spectator(Player):
                 "fainted": False,
             }]
         return active
-    
-    def _extract_bench_pokemon(self, battle: Battle, is_player: bool) -> list:
+
+    def _extract_types(self, poke) -> List[str]:
+        """ポケモンのタイプを抽出"""
+        types = []
+        if hasattr(poke, 'types') and poke.types:
+            types = [t.name.capitalize() if hasattr(t, 'name') else str(t) for t in poke.types if t]
+        return types if types else ["Normal"]
+
+    def _extract_moves(self, poke) -> List[Dict[str, str]]:
+        """ポケモンの技を抽出"""
+        moves = []
+        if hasattr(poke, 'moves') and poke.moves:
+            for move_id, move_obj in poke.moves.items():
+                move_name = getattr(move_obj, 'id', move_id)
+                move_type = getattr(move_obj, 'type', None)
+                type_name = move_type.name.capitalize() if move_type and hasattr(move_type, 'name') else "Normal"
+                moves.append({"name": move_name, "type": type_name})
+        return moves if moves else [{"name": "技", "type": "Normal"}]
+
+    def _extract_speed(self, poke) -> int:
+        """ポケモンの素早さを抽出"""
+        if hasattr(poke, 'stats') and poke.stats and 'spe' in poke.stats:
+            return poke.stats['spe']
+        elif hasattr(poke, 'base_stats') and poke.base_stats and 'spe' in poke.base_stats:
+            return poke.base_stats['spe']
+        return 100
+
+    def _extract_bench_pokemon(self, battle: Battle, is_player: bool) -> List[Dict[str, Any]]:
         """控えポケモンの情報を抽出"""
         bench = []
         try:
-            if is_player:
-                pokemon_dict = getattr(battle, 'team', {})
-                active_list = getattr(battle, 'active_pokemon', [])
-            else:
-                pokemon_dict = getattr(battle, 'opponent_team', {})
-                active_list = getattr(battle, 'opponent_active_pokemon', [])
+            pokemon_dict = getattr(battle, 'team' if is_player else 'opponent_team', {})
+            active_list = getattr(battle, 'active_pokemon' if is_player else 'opponent_active_pokemon', [])
             
-            active_names = set()
-            for poke in active_list:
-                if poke:
-                    active_names.add(getattr(poke, 'species', ''))
+            active_names = {getattr(poke, 'species', '') for poke in active_list if poke}
             
             for key, poke in pokemon_dict.items():
                 name = getattr(poke, 'species', 'Unknown')
                 if name not in active_names and not getattr(poke, 'fainted', False):
-                    types = []
-                    if hasattr(poke, 'types') and poke.types:
-                        types = [t.name.capitalize() if hasattr(t, 'name') else str(t) for t in poke.types if t]
-                    if not types:
-                        types = ["Normal"]
-                    
+                    types = self._extract_types(poke)
                     bench.append({
                         "name": name,
                         "hp_fraction": getattr(poke, 'current_hp_fraction', 1.0),
@@ -500,11 +444,10 @@ class Spectator(Player):
                         "fainted": getattr(poke, 'fainted', False),
                     })
         except Exception as e:
-            print(f"_extract_bench_pokemon error: {e}")
-        
+            logger.debug(f"控えポケモン抽出エラー: {e}")
         return bench
-    
-    def _extract_field_state(self, battle: Battle) -> dict:
+
+    def _extract_field_state(self, battle: Battle) -> Dict[str, Any]:
         """フィールド状態を抽出"""
         field_state = {}
         try:
@@ -512,31 +455,59 @@ class Spectator(Player):
             if hasattr(battle, 'weather') and battle.weather:
                 weather_keys = list(battle.weather.keys())
                 if weather_keys:
-                    field_state["weather"] = str(weather_keys[0])
+                    w = str(weather_keys[0]).lower()
+                    if "sun" in w or "drought" in w:
+                        field_state["weather"] = "sun"
+                    elif "rain" in w or "drizzle" in w:
+                        field_state["weather"] = "rain"
+                    elif "sand" in w or "stream" in w:
+                        field_state["weather"] = "sand"
+                    elif "hail" in w or "snow" in w:
+                        field_state["weather"] = "snow"
             
-            # トリックルーム
-            if hasattr(battle, 'fields') and 'trickroom' in battle.fields:
-                field_state["trick_room"] = True
-            
+            # フィールド
+            if hasattr(battle, 'fields'):
+                for f in battle.fields:
+                    f_str = str(f).lower()
+                    if "electric" in f_str:
+                        field_state["terrain"] = "electric"
+                    elif "grassy" in f_str:
+                        field_state["terrain"] = "grassy"
+                    elif "psychic" in f_str:
+                        field_state["terrain"] = "psychic"
+                    elif "misty" in f_str:
+                        field_state["terrain"] = "misty"
+                    elif "trickroom" in f_str:
+                        field_state["trickRoom"] = True
+
             # サイドコンディション
             if hasattr(battle, 'side_conditions'):
-                if 'tailwind' in battle.side_conditions:
-                    field_state["tailwind_player"] = True
+                sc = {str(k).lower(): v for k, v in battle.side_conditions.items()}
+                if 'tailwind' in sc:
+                    field_state["playerTailwind"] = True
+                if 'reflect' in sc:
+                    field_state["playerReflect"] = True
+                if 'lightscreen' in sc:
+                    field_state["playerLightScreen"] = True
             
             if hasattr(battle, 'opponent_side_conditions'):
-                if 'tailwind' in battle.opponent_side_conditions:
-                    field_state["tailwind_opponent"] = True
-            
+                osc = {str(k).lower(): v for k, v in battle.opponent_side_conditions.items()}
+                if 'tailwind' in osc:
+                    field_state["opponentTailwind"] = True
+                if 'reflect' in osc:
+                    field_state["opponentReflect"] = True
+                if 'lightscreen' in osc:
+                    field_state["opponentLightScreen"] = True
+                    
         except Exception as e:
-            print(f"_extract_field_state error: {e}")
+            logger.debug(f"フィールド状態抽出エラー: {e}")
         
         return field_state
-    
-    def _generate_candidates(self, prediction, fast_result, is_player: bool) -> list:
-        """候補手を生成する（ダブルバトル形式）"""
+
+    def _generate_candidates(self, prediction, fast_result, is_player: bool) -> List[Dict[str, Any]]:
+        """候補手を生成"""
         candidates = []
         
-        # predictionのalternativesがあればそれを使用
         if prediction.alternatives:
             for alt in prediction.alternatives[:3]:
                 candidates.append({
@@ -549,91 +520,68 @@ class Spectator(Player):
                     "score": alt.get("score", 50)
                 })
         
-        # alternativesがない場合はダミーデータ
         if not candidates:
             if is_player:
                 candidates = [
                     {"move1": "ドレインパンチ", "target1": "相手エース", "type1": "attack",
                      "move2": "テラクラスター", "target2": "相手サポート", "type2": "attack",
                      "score": int(prediction.p1_win_rate * 100)},
-                    {"move1": "ねこだまし", "target1": "相手エース", "type1": "protect",
-                     "move2": "まもる", "target2": "", "type2": "protect",
-                     "score": max(10, int((1 - prediction.p1_win_rate) * 50))},
-                    {"move1": "交代", "target1": "控えポケモン", "type1": "switch",
-                     "move2": "テラクラスター", "target2": "相手エース", "type2": "attack",
-                     "score": 15}
                 ]
             else:
                 candidates = [
                     {"move1": "アストラルビット", "target1": "全体", "type1": "attack",
                      "move2": "インファイト", "target2": "こちらエース", "type2": "attack",
                      "score": int((1 - prediction.p1_win_rate) * 100)},
-                    {"move1": "まもる", "target1": "", "type1": "protect",
-                     "move2": "すいりゅうれんだ", "target2": "こちらサポート", "type2": "attack",
-                     "score": max(10, int(prediction.p1_win_rate * 40))},
-                    {"move1": "交代", "target1": "控えポケモン", "type1": "switch",
-                     "move2": "まもる", "target2": "", "type2": "protect",
-                     "score": 10}
                 ]
         
         return candidates
-    
-    def _generate_explanation(self, p1_win: float, prediction) -> dict:
+
+    def _generate_explanation(self, p1_win: float, prediction) -> Dict[str, str]:
         """AI解説を生成"""
-        # predictionにexplanationがあれば使用
         if prediction.explanation:
             player_strategy = prediction.explanation
         else:
-            # 勝率に基づいて解説を生成
             if p1_win > 0.6:
-                player_strategy = "現在有利な状況です。相手のエースに圧力をかけつつ、安定択を選ぶのが良いでしょう。"
+                player_strategy = "現在有利な状況です。安定択を選ぶのが良いでしょう。"
             elif p1_win < 0.4:
-                player_strategy = "厳しい状況です。相手の読みを外す大胆な択が必要かもしれません。"
+                player_strategy = "厳しい状況です。大胆な択が必要かもしれません。"
             else:
-                player_strategy = "互角の展開です。ここでの読み合いが勝負を分けます。"
+                player_strategy = "互角の展開です。読み合いが勝負を分けます。"
         
-        # 相手の脅威分析
         if p1_win < 0.5:
-            opponent_threat = "相手は積極的に攻めてくる可能性が高いです。集中攻撃やテラスタルの切り返しに警戒してください。"
+            opponent_threat = "相手は積極的に攻めてくる可能性が高いです。"
         else:
-            opponent_threat = "相手は守りに入るか、逆転を狙った読みを仕掛けてくる可能性があります。"
+            opponent_threat = "相手は守りに入る可能性があります。"
         
         return {
             "playerStrategy": player_strategy,
             "opponentThreat": opponent_threat
         }
 
-    def _print_commentary(self, battle: Battle, prediction):
-        """
-        実況コメントを表示
-        """
+    def _print_commentary(self, battle: Battle, prediction) -> None:
+        """実況コメントをログ出力"""
         p1_win = prediction.p1_win_rate
         p2_win = 1.0 - p1_win
         
-        print(f"📊 勝率予測: {self.target_player} {p1_win:.1%} - {p2_win:.1%} Opponent")
+        logger.info(f"勝率予測: {self.target_player} {p1_win:.1%} - {p2_win:.1%} Opponent")
         
         if prediction.explanation:
-            print(f"🤖 解説: {prediction.explanation}")
+            logger.info(f"解説: {prediction.explanation}")
         
         if p1_win > 0.7:
-            print(f"🔥 {self.target_player} が優勢です！")
+            logger.info(f"{self.target_player} が優勢です！")
         elif p1_win < 0.3:
-            print(f"⚠️ {self.target_player} がピンチです...")
+            logger.info(f"{self.target_player} がピンチです...")
         else:
-            print(f"⚖️ 互角の戦いです。")
-            
-        # WebSocket放送 (非同期実行のためにensure_future)
+            logger.info("互角の戦いです。")
+        
+        # WebSocket放送
         asyncio.create_task(self._broadcast_state(battle, prediction))
 
-    async def run_loop(self):
-        """
-        メインループ
-        """
-        # 検索タスク開始
+    async def run_loop(self) -> None:
+        """メインループ"""
         asyncio.create_task(self._search_and_join_battles())
         
-        # 無限ループで待機（親クラスの処理が必要なら適宜）
+        logger.info("観戦ループ開始")
         while True:
             await asyncio.sleep(1)
-
-
