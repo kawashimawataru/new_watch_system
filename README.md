@@ -1,59 +1,108 @@
-# VGC AI System
+# VGC AI Spectator System
 
-Pokemon Showdown 上で VGC（ダブルバトル）を行う AI システム。
+Pokemon Showdown 上で VGC（ダブルバトル）を観戦し、AIによる候補手予測と解説を表示するシステム。
 
 ---
 
-## クイックスタート
+## 🚀 クイックスタート
+
+### 1. バックエンド起動
 
 ```bash
-# 1. 仮想環境を有効化
+# 仮想環境を有効化
 source .venv/bin/activate
 
-# 2. Showdownサーバーを起動（ターミナル1）
+# Pokemon Showdownサーバー起動 (別ターミナル)
 cd pokemon-showdown && node pokemon-showdown start
 
-# 3. AI対戦を開始（ターミナル2）
-cd /Users/kawashimawataru/Desktop/new_watch_game_system
-PYTHONPATH=. python scripts/run_predictor_trial.py
+# 観戦エージェント起動
+python scripts/run_spectator.py --target PlayerName --battle battle-gen9vgc2024-XXXX
+```
+
+### 2. フロントエンド起動
+
+```bash
+cd web-ui
+npm install  # 初回のみ
+npm run dev
+```
+
+ブラウザで `http://localhost:3000` を開く
+
+---
+
+## 📁 プロジェクト構造
+
+```
+new_watch_game_system/
+├── src/                    # Python Backend (DDD構造)
+│   ├── application/players/spectator.py  # 観戦エージェント
+│   └── infrastructure/messaging/broker.py # WebSocket配信
+│
+├── predictor/              # AI予測エンジン
+│   └── player/hybrid_strategist.py  # Fast/Slow統合戦略
+│
+├── web-ui/                 # Next.js Frontend
+│   ├── app/page.tsx        # メインページ
+│   ├── components/         # UIコンポーネント
+│   └── hooks/useGameState.ts # WebSocket接続
+│
+├── scripts/
+│   └── run_spectator.py    # 起動スクリプト
+│
+└── docs/                   # ドキュメント
 ```
 
 ---
 
-## ドキュメント
+## 📺 主な機能
+
+| 機能 | 説明 |
+|------|------|
+| **勝率予測** | リアルタイムで勝率をバー表示 |
+| **候補手表示** | ダブルバトル形式（2匹同時行動）で予測手を表示 |
+| **戦術図解** | 攻撃対象・脅威を矢印で可視化 |
+| **VFX演出** | Nice Play, Fate Turn, Critical Hit 等 |
+
+---
+
+## 📚 ドキュメント
 
 | ファイル | 内容 |
 |---|---|
 | [CURRENT_STATUS.md](CURRENT_STATUS.md) | 現在の実装状況 |
 | [NEW_ARCHITECTURE_SPEC.md](NEW_ARCHITECTURE_SPEC.md) | アーキテクチャ仕様 |
-| [docs/OPERATION_MANUAL.md](docs/OPERATION_MANUAL.md) | 操作マニュアル |
+| [docs/000_OPERATION_MANUAL.md](docs/000_OPERATION_MANUAL.md) | 操作マニュアル |
+| [web-ui/README.md](web-ui/README.md) | フロントエンド詳細 |
 
 ---
 
-## 必要な環境変数
+## 🛠️ 技術スタック
+
+### Frontend
+- Next.js 16.1.1
+- Tailwind CSS v4
+- Framer Motion
+- Lucide React
+
+### Backend
+- Python 3.10+
+- FastAPI + Uvicorn
+- poke-env (Pokemon Showdown API)
+- LightGBM + MCTS
+
+---
+
+## ⚙️ 環境変数
+
+`.env` ファイルに設定:
 
 ```bash
-export OPENAI_API_KEY="your-api-key"  # LLM機能に必要
+OPENAI_API_KEY="your-api-key"  # LLM機能に必要（オプション）
 ```
 
 ---
 
-## 主要機能
-
-### Phase 1: 基盤整備
-- ダメージ計算API（ko_prob, expected）
-- ターン間状態追跡（BattleMemory）
-- 相手行動予測（OpponentModel）
-- 評価関数改善（脅威度, プラン遂行度）
-
-### Phase 2: 上位ロジック
-- 隠れ情報の確率管理（BeliefState）
-- リスク管理（Secure/Gamble モード）
-- LLM自己整合（3回投票）
-- 戦術テンプレ混合（6種類）
-
----
-
-## ライセンス
+## 📜 ライセンス
 
 MIT License

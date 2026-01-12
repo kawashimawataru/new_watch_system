@@ -8,6 +8,8 @@ import { ShieldAlert, Swords, X, Target } from "lucide-react";
 interface VisualReasoningViewProps {
     p1Pokemon: string[];
     p2Pokemon: string[];
+    playerStrategy?: string;
+    opponentThreat?: string;
     className?: string;
     onClose?: () => void;
 }
@@ -15,11 +17,16 @@ interface VisualReasoningViewProps {
 export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
     p1Pokemon,
     p2Pokemon,
+    playerStrategy = "分析中...",
+    opponentThreat = "相手の動きを予測中...",
     className,
     onClose
 }) => {
     const activeP1 = p1Pokemon.slice(0, 2);
     const activeP2 = p2Pokemon.slice(0, 2);
+
+    // Shortened names for display
+    const shortenName = (name: string) => name.substring(0, 5);
 
     return (
         <div className={cn("w-full h-full bg-black/95 backdrop-blur-md flex flex-col p-4 relative", className)}>
@@ -56,7 +63,7 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
                             animate={{ x: 0, opacity: 1 }}
                             transition={{ delay: i * 0.1 }}
                         >
-                            <span className="text-xs font-bold text-center leading-none px-1">{poke.substring(0, 5)}</span>
+                            <span className="text-xs font-bold text-center leading-none px-1">{shortenName(poke)}</span>
                         </motion.div>
                     ))}
                 </div>
@@ -73,7 +80,7 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
                             </marker>
                         </defs>
 
-                        {/* === P1 Actions (Red) === */}
+                        {/* P1 Actions (Red) */}
                         <motion.path
                             d="M 280 80 Q 500 50 720 80"
                             fill="none"
@@ -87,11 +94,11 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
                         />
                         <foreignObject x="40%" y="30" width="100" height="30">
                             <div className="bg-red-900/90 text-red-100 text-[10px] font-bold px-2 py-0.5 rounded text-center border border-red-500 shadow-md">
-                                40% 弱点攻撃
+                                攻撃優先
                             </div>
                         </foreignObject>
 
-                        {/* === P2 Actions (Blue) === */}
+                        {/* P2 Actions (Blue) */}
                         <motion.path
                             d="M 720 80 Q 500 130 280 180"
                             fill="none"
@@ -106,7 +113,7 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
                         />
                         <foreignObject x="60%" y="120" width="100" height="30">
                             <div className="bg-blue-900/90 text-blue-100 text-[10px] font-bold px-2 py-0.5 rounded text-center border border-blue-500 shadow-md">
-                                65% 集中砲火
+                                集中狙い
                             </div>
                         </foreignObject>
                     </svg>
@@ -125,7 +132,7 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
                             animate={{ x: 0, opacity: 1 }}
                             transition={{ delay: 0.1 + i * 0.1 }}
                         >
-                            <span className="text-xs font-bold text-center leading-none px-1">{poke.substring(0, 5)}</span>
+                            <span className="text-xs font-bold text-center leading-none px-1">{shortenName(poke)}</span>
                             {i === 0 && (
                                 <div className="absolute -top-5 left-1/2 -translate-x-1/2 animate-bounce">
                                     <Target className="w-6 h-6 text-yellow-500 drop-shadow-md" />
@@ -136,7 +143,7 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
                 </div>
             </div>
 
-            {/* Dual Perspective Explanation */}
+            {/* Dual Perspective Explanation - Dynamic from props */}
             <div className="mt-2 flex gap-4 h-[80px] shrink-0">
                 {/* Player Logic */}
                 <div className="flex-1 bg-green-900/10 border border-green-500/30 rounded-lg p-3 overflow-y-auto hover:bg-green-900/20 transition-colors">
@@ -145,7 +152,7 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
                         PLAYER STRATEGY
                     </h4>
                     <p className="text-[11px] text-gray-200 leading-snug">
-                        「ドレインパンチ」で相手エース({activeP2[0]})を削りつつ回復。サポート役({activeP1[1]})は「守る」で相手の集中砲火を凌ぎ、次ターンの有利盤面を作ります。
+                        {playerStrategy}
                     </p>
                 </div>
 
@@ -156,7 +163,7 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
                         OPPONENT THREAT
                     </h4>
                     <p className="text-[11px] text-gray-200 leading-snug">
-                        高火力の{activeP2[0]}で{activeP1[1]}を集中攻撃し、数的有利を狙ってくる可能性が高いです。ゴーストテラスタルでの切り返しにも警戒が必要です。
+                        {opponentThreat}
                     </p>
                 </div>
             </div>
