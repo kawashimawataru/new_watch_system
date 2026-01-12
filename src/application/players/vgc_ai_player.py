@@ -17,7 +17,7 @@ import asyncio
 from typing import List, Optional
 
 from poke_env.player import Player
-from poke_env.battle import DoubleBattle
+from poke_env.battle import Battle, DoubleBattle
 from poke_env.ps_client.server_configuration import LocalhostServerConfiguration
 
 from predictor.player.hybrid_strategist import HybridStrategist
@@ -121,7 +121,7 @@ class VGCAIPlayer(Player):
         # 親クラスの処理を呼び出す
         super()._handle_message(message)
 
-    def teampreview(self, battle: DoubleBattle):
+    def teampreview(self, battle: Battle):
         """
         チームプレビュー時の選出を決定する
         先頭4匹を選出（順番はそのまま）
@@ -133,16 +133,45 @@ class VGCAIPlayer(Player):
         # 先頭4匹を選出
         return "/team 1234"
 
-    def choose_move(self, battle: DoubleBattle):
+    def choose_move(self, battle: Battle):
         """
-        ダブルバトルの行動選択
-        2体のポケモンの行動を同時に選択する
+        バトルの行動選択
+        シングル/ダブルバトル両方に対応
         """
+        # #region agent log
+        import json
+        import os
+        try:
+            is_double = isinstance(battle, DoubleBattle)
+            active_count = len(getattr(battle, 'active_pokemon', []))
+            log_data = {
+                "location": "vgc_ai_player.py:choose_move",
+                "message": "choose_move called",
+                "data": {
+                    "battle_type": "double" if is_double else "single",
+                    "turn": getattr(battle, 'turn', 0),
+                    "active_pokemon_count": active_count,
+                    "strategy": self.strategy,
+                },
+                "timestamp": __import__('time').time(),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "C"
+            }
+            with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_data) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        
         self.move_count += 1
         
         print(f"\n{'='*60}")
         print(f"ターン {battle.turn} - {self.username} の思考中... [{self.strategy}]")
         print(f"{'='*60}")
+        
+        # バトル形式を判定
+        is_double = isinstance(battle, DoubleBattle)
         
         # 現在のアクティブポケモンを表示
         for i, pokemon in enumerate(battle.active_pokemon):
@@ -217,40 +246,75 @@ class VGCAIPlayer(Player):
         # 行動選択 - MCTSの結果を優先
         orders = None
         
-        # MCTSの結果がある場合はそれを使う
-        if slow_result and slow_result.alternatives:
-            best_alt = max(slow_result.alternatives, key=lambda x: x.get("win_rate", 0))
-            best_desc = best_alt.get("description", "")
-            best_win_rate = best_alt.get("win_rate", 0)
-            print(f"  🎯 MCTS推奨: {best_desc} (勝率: {best_win_rate:.1%})")
-            orders = self._parse_action_description(battle, best_desc)
-        elif slow_result and slow_result.best_action:
-            print(f"  🎯 推奨: {slow_result.best_action}")
-            orders = self._parse_action_description(battle, slow_result.best_action)
+        try:
+            # MCTSの結果がある場合はそれを使う
+            if slow_result and slow_result.alternatives:
+                best_alt = max(slow_result.alternatives, key=lambda x: x.get("win_rate", 0))
+                best_desc = best_alt.get("description", "")
+                best_win_rate = best_alt.get("win_rate", 0)
+                print(f"  🎯 MCTS推奨: {best_desc} (勝率: {best_win_rate:.1%})")
+                orders = self._parse_action_description(battle, best_desc)
+            elif slow_result and slow_result.best_action:
+                print(f"  🎯 推奨: {slow_result.best_action}")
+                orders = self._parse_action_description(battle, slow_result.best_action)
+        except Exception as e:
+            print(f"  ⚠️ MCTS結果の解析エラー: {e}")
+            import traceback
+            traceback.print_exc()
         
         # MCTSの結果がない場合はヒューリスティック
         if not orders:
             print("  ↩️ ヒューリスティックで行動選択")
-            orders = self._choose_heuristic_action(battle)
+            try:
+                if is_double:
+                    orders = self._choose_heuristic_action(battle)  # type: ignore
+                else:
+                    orders = self._choose_heuristic_action_single(battle)
+            except Exception as e:
+                print(f"  ⚠️ ヒューリスティックエラー: {e}")
+                import traceback
+                traceback.print_exc()
+                orders = None
         
         # BattleOrderを返す
-        from poke_env.player.battle_order import DoubleBattleOrder
-        
-        # ordersが既にDoubleBattleOrderの場合はそのまま返す（強制交代時）
-        if isinstance(orders, DoubleBattleOrder):
-            return orders
-        
-        if not orders:
-            # デフォルトの行動を返す
-            return self.choose_random_doubles_move(battle)
-        
-        # ダブルバトルでは DoubleBattleOrder を使う
-        first_order = orders[0] if len(orders) >= 1 else None
-        second_order = orders[1] if len(orders) >= 2 else None
-        
-        return DoubleBattleOrder(first_order=first_order, second_order=second_order)
+        try:
+            if is_double:
+                from poke_env.player.battle_order import DoubleBattleOrder
+                
+                # ordersが既にDoubleBattleOrderの場合はそのまま返す（強制交代時）
+                if isinstance(orders, DoubleBattleOrder):
+                    return orders
+                
+                if not orders:
+                    # デフォルトの行動を返す
+                    return self.choose_random_doubles_move(battle)
+                
+                # ダブルバトルでは DoubleBattleOrder を使う
+                first_order = orders[0] if isinstance(orders, list) and len(orders) >= 1 else None
+                second_order = orders[1] if isinstance(orders, list) and len(orders) >= 2 else None
+                
+                return DoubleBattleOrder(first_order=first_order, second_order=second_order)
+            else:
+                # シングルバトル
+                if not orders:
+                    return self.choose_random_move(battle)
+                
+                # 最初の行動を返す
+                if isinstance(orders, list) and len(orders) > 0:
+                    return orders[0]
+                else:
+                    return self.choose_random_move(battle)
+        except Exception as e:
+            print(f"  ⚠️ BattleOrder生成エラー: {e}")
+            import traceback
+            traceback.print_exc()
+            # 最終フォールバック
+            if is_double:
+                return self.choose_random_doubles_move(battle)
+            else:
+                return self.choose_random_move(battle)
 
-    def _choose_mcts_action(self, battle: DoubleBattle):
+    def _choose_mcts_action(self, battle: Battle):
         """
         MCTSで行動を選択（HybridStrategistを使用）
         alternativesから最も勝率の高い行動を選択
@@ -282,14 +346,39 @@ class VGCAIPlayer(Player):
         # MCTSが失敗した場合はヒューリスティックにフォールバック
         print("  ↩️ フォールバック: ヒューリスティック")
         return self._choose_heuristic_action(battle)
-    
-    def _parse_action_description(self, battle: DoubleBattle, description: str):
+
+    def _parse_action_description(self, battle: Battle, description: str):
         """
         MCTSのdescriptionからBattleOrderを生成
         例: "thunderbolt (slot 0->1), protect (slot 1)"
+        シングル/ダブル両方に対応
         """
+        # #region agent log
+        import json
+        try:
+            is_double = isinstance(battle, DoubleBattle)
+            log_data = {
+                "location": "vgc_ai_player.py:_parse_action_description",
+                "message": "Parsing action description",
+                "data": {
+                    "description": description[:100],
+                    "battle_type": "double" if is_double else "single",
+                    "active_pokemon_count": len(getattr(battle, 'active_pokemon', [])),
+                },
+                "timestamp": __import__('time').time(),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "D"
+            }
+            with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_data) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        
         orders = []
         description_lower = description.lower()
+        is_double = isinstance(battle, DoubleBattle)
         
         for i, pokemon in enumerate(battle.active_pokemon):
             if pokemon is None or pokemon.fainted:
@@ -342,6 +431,75 @@ class VGCAIPlayer(Player):
         
         return orders if orders else None
 
+    def _choose_heuristic_action_single(self, battle: Battle):
+        """
+        シングルバトル用のヒューリスティック行動選択
+        """
+        # #region agent log
+        import json
+        try:
+            log_data = {
+                "location": "vgc_ai_player.py:_choose_heuristic_action_single",
+                "message": "Heuristic action selection (single)",
+                "data": {
+                    "turn": getattr(battle, 'turn', 0),
+                    "available_moves_count": len(getattr(battle, 'available_moves', [])),
+                },
+                "timestamp": __import__('time').time(),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "D"
+            }
+            with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_data) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        
+        try:
+            # 利用可能な技
+            available_moves = getattr(battle, 'available_moves', [])
+            # 利用可能な交代先
+            available_switches = getattr(battle, 'available_switches', [])
+            
+            if available_moves:
+                # 最も威力の高い技を選択
+                best_move = max(
+                    available_moves,
+                    key=lambda m: m.base_power if m.base_power else 0
+                )
+                
+                # ターゲット選択
+                target = None
+                target_str = str(best_move.target).lower()
+                if "normal" in target_str or "any" in target_str:
+                    # 相手を狙う
+                    for j, opp in enumerate(battle.opponent_active_pokemon):
+                        if opp and not opp.fainted:
+                            target = j + 1
+                            break
+                
+                if target:
+                    return [self.create_order(best_move, move_target=target)]
+                else:
+                    return [self.create_order(best_move)]
+            
+            elif available_switches:
+                # 技がない場合は交代
+                return [self.create_order(available_switches[0])]
+            
+            # 強制交代の場合
+            if getattr(battle, 'force_switch', False):
+                if available_switches:
+                    return [self.create_order(available_switches[0])]
+            
+            return None
+        except Exception as e:
+            print(f"  ⚠️ ヒューリスティックエラー: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+    
     def _choose_heuristic_action(self, battle: DoubleBattle):
         """
         ダブルバトル用のヒューリスティック行動選択（DDD対応版）
@@ -442,7 +600,7 @@ class VGCAIPlayer(Player):
                     order = self.create_order(switch_target)
                     orders.append(order)
                     print(f"  行動[{i}]: 交代 → {switch_target.species}")
-                    
+                
             elif available_switches:
                 # 技がない場合は交代
                 switch_target = available_switches[0]
@@ -463,7 +621,7 @@ class VGCAIPlayer(Player):
                         if sw.species not in used_switches:
                             switch_target = sw
                             used_switches.add(sw.species)
-                            order = self.create_order(switch_target)
+                        order = self.create_order(switch_target)
                             orders.append(order)
                             # ロック状態をクリア（交代するので）
                             self.action_filter.clear_lock(sw.species)
@@ -485,7 +643,7 @@ class VGCAIPlayer(Player):
         
         return orders
     
-    def _update_entry_turns(self, battle: DoubleBattle) -> None:
+    def _update_entry_turns(self, battle: Battle) -> None:
         """各ポケモンが場に出たターンを追跡"""
         for pokemon in battle.active_pokemon:
             if pokemon and not pokemon.fainted:
@@ -504,8 +662,8 @@ class VGCAIPlayer(Player):
             return "STATUS" in category
         return False
 
-    def _convert_battle_to_state(self, battle: DoubleBattle) -> BattleState:
-        """DoubleBattle -> BattleState 変換"""
+    def _convert_battle_to_state(self, battle: Battle) -> BattleState:
+        """Battle -> BattleState 変換（シングル/ダブル両対応）"""
         
         # Player A (自分)
         active_a = []
@@ -564,7 +722,7 @@ class VGCAIPlayer(Player):
             legal_actions={"A": candidates, "B": []}
         )
 
-    def _battle_finished_callback(self, battle: DoubleBattle):
+    def _battle_finished_callback(self, battle: Battle):
         """バトル終了時のコールバック"""
         print(f"\n{'='*60}")
         print(f"🏁 バトル終了: {battle.battle_tag}")
@@ -578,15 +736,17 @@ class VGCAIPlayer(Player):
         print(f"ターン数: {battle.turn}")
         self.move_count = 0
 
-    def _display_action_predictions(self, battle: DoubleBattle, alternatives: list):
+    def _display_action_predictions(self, battle: Battle, alternatives: list):
         """
-        ダブルバトル形式で各ポケモンの予測行動を表示
+        バトル形式で各ポケモンの予測行動を表示（シングル/ダブル対応）
         - 技 + ターゲット（単体技の場合）
         - 交代先
         - 勝率
         """
+        is_double = isinstance(battle, DoubleBattle)
+        battle_type_label = "ダブルバトル" if is_double else "シングルバトル"
         print(f"\n{'╔' + '═'*62 + '╗'}")
-        print(f"{'║'} 🎯 行動予測 (ダブルバトル)                                   {'║'}")
+        print(f"{'║'} 🎯 行動予測 ({battle_type_label})                                   {'║'}")
         print(f"{'╠' + '═'*62 + '╣'}")
         
         # P1 (AI側) の行動予測
@@ -644,7 +804,7 @@ class VGCAIPlayer(Player):
             print(f"{'║'} {rank}. {color_name:<30} (Speed: {int(speed):>4})        {'║'}")
         print(f"{'╚' + '═'*62 + '╝'}")
     
-    def _analyze_action_probabilities(self, battle: DoubleBattle, alternatives: list, is_p1: bool) -> dict:
+    def _analyze_action_probabilities(self, battle: Battle, alternatives: list, is_p1: bool) -> dict:
         """
         各ポケモンの行動確率を計算
         
@@ -740,7 +900,7 @@ class VGCAIPlayer(Player):
         
         return predictions
     
-    def _predict_opponent_actions(self, battle: DoubleBattle) -> dict:
+    def _predict_opponent_actions(self, battle: Battle) -> dict:
         """
         相手のポケモンの予測行動
         - OTS (Open Team Sheet) データから技を取得
@@ -798,7 +958,7 @@ class VGCAIPlayer(Player):
         
         return predictions
     
-    def _analyze_action_probabilities_with_targets(self, battle: DoubleBattle, alternatives: list, is_p1: bool) -> dict:
+    def _analyze_action_probabilities_with_targets(self, battle: Battle, alternatives: list, is_p1: bool) -> dict:
         """
         各ポケモンの行動確率を計算（ターゲット・交代込み）
         MCTSの結果(alternatives)があればそれを優先的に使用。
@@ -958,7 +1118,7 @@ class VGCAIPlayer(Player):
         
         return predictions
     
-    def _predict_opponent_actions_with_targets(self, battle: DoubleBattle) -> dict:
+    def _predict_opponent_actions_with_targets(self, battle: Battle) -> dict:
         """
         相手のポケモンの予測行動（ターゲット込み）
         """

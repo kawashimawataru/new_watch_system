@@ -10,7 +10,7 @@ interface ShowdownFrameProps {
 }
 
 export const ShowdownFrame: React.FC<ShowdownFrameProps> = ({
-    roomUrl = "https://play.pokemonshowdown.com/",
+    roomUrl = "http://localhost:8000/",
     className,
 }) => {
     return (

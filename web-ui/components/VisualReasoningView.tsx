@@ -12,6 +12,10 @@ interface VisualReasoningViewProps {
     p2Pokemon: string[];
     playerStrategy?: string;
     opponentThreat?: string;
+    currentSituation?: string;  // 現在の状況説明
+    topCandidateReason?: string;  // トップ候補の理由
+    riskAnalysis?: string;  // リスク分析
+    battleType?: "single" | "double";  // バトル形式
     fieldConditions?: any; // Phase 25
     className?: string;
     onClose?: () => void;
@@ -22,12 +26,17 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
     p2Pokemon,
     playerStrategy = "分析中...",
     opponentThreat = "相手の動きを予測中...",
+    currentSituation,
+    topCandidateReason,
+    riskAnalysis,
+    battleType = "double",
     fieldConditions,
     className,
     onClose
 }) => {
-    const activeP1 = p1Pokemon.slice(0, 2);
-    const activeP2 = p2Pokemon.slice(0, 2);
+    const isSingle = battleType === "single";
+    const activeP1 = isSingle ? p1Pokemon.slice(0, 1) : p1Pokemon.slice(0, 2);
+    const activeP2 = isSingle ? p2Pokemon.slice(0, 1) : p2Pokemon.slice(0, 2);
 
     // Shortened names for display
     const shortenName = (name: string) => name.substring(0, 5);
@@ -153,28 +162,71 @@ export const VisualReasoningView: React.FC<VisualReasoningViewProps> = ({
             </div>
 
             {/* Dual Perspective Explanation - Dynamic from props */}
-            <div className="mt-2 flex gap-4 h-[80px] shrink-0">
-                {/* Player Logic */}
-                <div className="flex-1 bg-green-900/10 border border-green-500/30 rounded-lg p-3 overflow-y-auto hover:bg-green-900/20 transition-colors">
-                    <h4 className="text-xs font-bold text-green-400 mb-1 flex items-center gap-2">
-                        <span className="flex w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_lime]" />
-                        PLAYER STRATEGY
-                    </h4>
-                    <p className="text-[11px] text-gray-200 leading-snug">
-                        {playerStrategy}
-                    </p>
-                </div>
+            <div className="mt-2 flex flex-col gap-2 shrink-0 max-h-[200px] overflow-y-auto">
+                {/* Current Situation */}
+                {currentSituation && (
+                    <div className="bg-yellow-900/10 border border-yellow-500/30 rounded-lg p-2">
+                        <h4 className="text-xs font-bold text-yellow-400 mb-1 flex items-center gap-2">
+                            <span className="flex w-2 h-2 rounded-full bg-yellow-500 shadow-[0_0_5px_yellow]" />
+                            現在の状況
+                        </h4>
+                        <p className="text-[11px] text-gray-200 leading-snug">
+                            {currentSituation}
+                        </p>
+                    </div>
+                )}
+                
+                <div className="flex gap-4">
+                    {/* Player Logic */}
+                    <div className="flex-1 bg-green-900/10 border border-green-500/30 rounded-lg p-3 overflow-y-auto hover:bg-green-900/20 transition-colors">
+                        <h4 className="text-xs font-bold text-green-400 mb-1 flex items-center gap-2">
+                            <span className="flex w-2 h-2 rounded-full bg-green-500 shadow-[0_0_5px_lime]" />
+                            PLAYER STRATEGY
+                        </h4>
+                        <p className="text-[11px] text-gray-200 leading-snug">
+                            {playerStrategy}
+                        </p>
+                    </div>
 
-                {/* Opponent Anticipation */}
-                <div className="flex-1 bg-blue-900/10 border border-blue-500/30 rounded-lg p-3 overflow-y-auto hover:bg-blue-900/20 transition-colors">
-                    <h4 className="text-xs font-bold text-blue-400 mb-1 flex items-center gap-2">
-                        <span className="flex w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_5px_cyan]" />
-                        OPPONENT THREAT
-                    </h4>
-                    <p className="text-[11px] text-gray-200 leading-snug">
-                        {opponentThreat}
-                    </p>
+                    {/* Opponent Anticipation */}
+                    <div className="flex-1 bg-blue-900/10 border border-blue-500/30 rounded-lg p-3 overflow-y-auto hover:bg-blue-900/20 transition-colors">
+                        <h4 className="text-xs font-bold text-blue-400 mb-1 flex items-center gap-2">
+                            <span className="flex w-2 h-2 rounded-full bg-blue-500 shadow-[0_0_5px_cyan]" />
+                            OPPONENT THREAT
+                        </h4>
+                        <p className="text-[11px] text-gray-200 leading-snug">
+                            {opponentThreat}
+                        </p>
+                    </div>
                 </div>
+                
+                {/* Additional Analysis */}
+                {(topCandidateReason || riskAnalysis) && (
+                    <div className="flex gap-4">
+                        {topCandidateReason && (
+                            <div className="flex-1 bg-purple-900/10 border border-purple-500/30 rounded-lg p-2">
+                                <h4 className="text-xs font-bold text-purple-400 mb-1 flex items-center gap-2">
+                                    <span className="flex w-2 h-2 rounded-full bg-purple-500 shadow-[0_0_5px_purple]" />
+                                    トップ候補の理由
+                                </h4>
+                                <p className="text-[11px] text-gray-200 leading-snug">
+                                    {topCandidateReason}
+                                </p>
+                            </div>
+                        )}
+                        {riskAnalysis && (
+                            <div className="flex-1 bg-red-900/10 border border-red-500/30 rounded-lg p-2">
+                                <h4 className="text-xs font-bold text-red-400 mb-1 flex items-center gap-2">
+                                    <span className="flex w-2 h-2 rounded-full bg-red-500 shadow-[0_0_5px_red]" />
+                                    リスク分析
+                                </h4>
+                                <p className="text-[11px] text-gray-200 leading-snug">
+                                    {riskAnalysis}
+                                </p>
+                            </div>
+                        )}
+                    </div>
+                )}
             </div>
         </div>
     );

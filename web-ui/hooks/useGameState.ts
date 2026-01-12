@@ -47,6 +47,9 @@ interface CandidateMove {
 interface Explanation {
     playerStrategy: string;
     opponentThreat: string;
+    currentSituation?: string;  // 現在の状況説明
+    topCandidateReason?: string;  // トップ候補の理由
+    riskAnalysis?: string;  // リスク分析
 }
 
 interface WinRatePoint {
@@ -71,6 +74,7 @@ interface GameState {
     turn: number;
     winRate: number;
     winRateHistory: WinRatePoint[];
+    battleType?: "single" | "double";  // バトル形式
     p1: PlayerInfo;
     p2: PlayerInfo;
     candidates: {
@@ -85,6 +89,7 @@ interface UseGameStateReturn {
     isConnected: boolean;
     gameState: GameState | null;
     winRateHistory: WinRatePoint[];
+    battleType: "single" | "double";  // バトル形式
     candidates: {
         p1: CandidateMove[];
         p2: CandidateMove[];
@@ -93,12 +98,13 @@ interface UseGameStateReturn {
     fieldConditions: FieldConditions | null;  // Phase 24
 }
 
-const WEBSOCKET_URL = "ws://localhost:8000/ws/spectator";
+const WEBSOCKET_URL = "ws://localhost:8001/ws/spectator";
 
 export function useGameState(): UseGameStateReturn {
     const [isConnected, setIsConnected] = useState(false);
     const [gameState, setGameState] = useState<GameState | null>(null);
     const [winRateHistory, setWinRateHistory] = useState<WinRatePoint[]>([]);
+    const [battleType, setBattleType] = useState<"single" | "double">("double");  // デフォルトはダブル
     const [candidates, setCandidates] = useState<{ p1: CandidateMove[], p2: CandidateMove[] } | null>(null);
     const [explanation, setExplanation] = useState<Explanation | null>(null);
     const [fieldConditions, setFieldConditions] = useState<FieldConditions | null>(null);  // Phase 24
@@ -152,6 +158,11 @@ export function useGameState(): UseGameStateReturn {
                     const data = message.data as GameState;
                     setGameState(data);
 
+                    // バトル形式の更新
+                    if (data.battleType) {
+                        setBattleType(data.battleType);
+                    }
+
                     // 勝率履歴更新 (バックエンドから送られてくる場合はそれを使用)
                     if (data.winRateHistory && data.winRateHistory.length > 0) {
                         setWinRateHistory(data.winRateHistory);
@@ -194,6 +205,7 @@ export function useGameState(): UseGameStateReturn {
         isConnected,
         gameState,
         winRateHistory,
+        battleType,
         candidates,
         explanation,
         fieldConditions,  // Phase 24

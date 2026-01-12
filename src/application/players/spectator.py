@@ -214,6 +214,29 @@ class Spectator(Player):
 
     def _process_battle_message(self, message: str, battle: Battle) -> None:
         """バトルメッセージを処理"""
+        # #region agent log
+        import json
+        import os
+        try:
+            log_data = {
+                "location": "spectator.py:_process_battle_message",
+                "message": "Battle message received",
+                "data": {
+                    "message_preview": message[:100],
+                    "battle_tag": getattr(battle, 'battle_tag', 'unknown'),
+                    "turn": getattr(battle, 'turn', 0),
+                },
+                "timestamp": __import__('time').time(),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "A"
+            }
+            with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_data) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        
         super()._process_battle_message(message, battle)
         
         # ターン更新を検知
@@ -234,17 +257,72 @@ class Spectator(Player):
 
     def _convert_battle_to_state(self, battle: Battle) -> BattleState:
         """Battle -> BattleState 変換"""
+        # #region agent log
+        import json
+        import os
+        try:
+            active_count = len(getattr(battle, 'active_pokemon', []))
+            log_data = {
+                "location": "spectator.py:_convert_battle_to_state",
+                "message": "Converting battle to state",
+                "data": {
+                    "battle_tag": getattr(battle, 'battle_tag', 'unknown'),
+                    "turn": getattr(battle, 'turn', 0),
+                    "active_pokemon_count": active_count,
+                    "has_active_pokemon": hasattr(battle, 'active_pokemon'),
+                },
+                "timestamp": __import__('time').time(),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "B"
+            }
+            with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_data) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        
         player_a_name = self.target_player
         player_b_name = "Opponent"
         
+        # 実際のアクティブポケモンを抽出
+        player_a_active = []
+        try:
+            active_list = getattr(battle, 'active_pokemon', [])
+            for poke in active_list:
+                if poke:
+                    player_a_active.append(PokemonBattleState(
+                        name=getattr(poke, 'species', 'Unknown'),
+                        hp_fraction=getattr(poke, 'current_hp_fraction', 1.0),
+                        species=getattr(poke, 'species', 'Unknown'),
+                    ))
+        except Exception as e:
+            logger.debug(f"アクティブポケモン抽出エラー: {e}")
+            player_a_active = [PokemonBattleState(name="Unknown", hp_fraction=1.0)]
+        
+        # 相手のアクティブポケモンを抽出
+        player_b_active = []
+        try:
+            opponent_active_list = getattr(battle, 'opponent_active_pokemon', [])
+            for poke in opponent_active_list:
+                if poke:
+                    player_b_active.append(PokemonBattleState(
+                        name=getattr(poke, 'species', 'Unknown'),
+                        hp_fraction=getattr(poke, 'current_hp_fraction', 1.0),
+                        species=getattr(poke, 'species', 'Unknown'),
+                    ))
+        except Exception as e:
+            logger.debug(f"相手アクティブポケモン抽出エラー: {e}")
+            player_b_active = [PokemonBattleState(name="Unknown", hp_fraction=1.0)]
+        
         player_a = PlayerState(
             name=player_a_name,
-            active=[PokemonBattleState(name="Unknown", hp_fraction=1.0)],
+            active=player_a_active if player_a_active else [PokemonBattleState(name="Unknown", hp_fraction=1.0)],
             reserves=[]
         )
         player_b = PlayerState(
             name=player_b_name,
-            active=[PokemonBattleState(name="Unknown", hp_fraction=1.0)],
+            active=player_b_active if player_b_active else [PokemonBattleState(name="Unknown", hp_fraction=1.0)],
             reserves=[]
         )
         
@@ -291,6 +369,25 @@ class Spectator(Player):
             if len(self._win_rate_history) > 20:
                 self._win_rate_history = self._win_rate_history[-20:]
             
+            # バトル形式を検出（シングル/ダブル）
+            battle_type = "double"  # デフォルトはダブル
+            try:
+                from poke_env.battle import DoubleBattle
+                if isinstance(battle, DoubleBattle):
+                    battle_type = "double"
+                else:
+                    battle_type = "single"
+            except Exception:
+                # フォールバック: active_pokemonの数で判定
+                try:
+                    active_count = len(getattr(battle, 'active_pokemon', []))
+                    if active_count <= 1:
+                        battle_type = "single"
+                    else:
+                        battle_type = "double"
+                except Exception:
+                    battle_type = "double"  # デフォルト
+            
             # ブロードキャスト用メッセージを構築
             message = {
                 "type": "game_update",
@@ -300,6 +397,7 @@ class Spectator(Player):
                     "winRateHistory": self._win_rate_history,
                     "boardScore": analysis.board_score.total,
                     "fieldConditions": field_state,
+                    "battleType": battle_type,  # シングル/ダブル
                     "p1": {
                         "name": self.target_player,
                         "rating": getattr(battle, "rating", 1500),

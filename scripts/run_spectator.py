@@ -21,7 +21,7 @@ async def main():
     parser = argparse.ArgumentParser(description="Run AI Spectator")
     parser.add_argument("--target", type=str, required=True, help="Target player username to watch")
     parser.add_argument("--battle", type=str, default=None, help="Battle ID to join directly (e.g., battle-gen9randombattle-1)")
-    parser.add_argument("--port", type=int, default=8000, help="API Server port")
+    parser.add_argument("--port", type=int, default=8001, help="API Server port")
     args = parser.parse_args()
 
     print(f"🚀 AI観戦エージェント起動")
