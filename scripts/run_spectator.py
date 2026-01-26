@@ -21,7 +21,7 @@ async def main():
     parser = argparse.ArgumentParser(description="Run AI Spectator")
     parser.add_argument("--target", type=str, required=True, help="Target player username to watch")
     parser.add_argument("--battle", type=str, default=None, help="Battle ID to join directly (e.g., battle-gen9randombattle-1)")
-    parser.add_argument("--port", type=int, default=8001, help="API Server port")
+    parser.add_argument("--port", type=int, default=8000, help="API Server port")
     args = parser.parse_args()
 
     print(f"🚀 AI観戦エージェント起動")
@@ -32,10 +32,11 @@ async def main():
     
     # Spectator 初期化
     print("Showdownサーバーに接続中...")
+    # server_configuration=None を渡すと、spectator.py内で自動的にconfig.showdownの設定を使用
     spectator = Spectator(
         target_player=args.target,
         battle_id=args.battle,
-        server_configuration=LocalhostServerConfiguration,
+        server_configuration=None,  # 自動的にconfig.showdownのポート設定を使用
         log_level=10,
     )
     
@@ -45,10 +46,31 @@ async def main():
     
     # 並列実行
     print("running...")
+    print(f"✅ API Server starting on http://0.0.0.0:{args.port}")
+    print(f"✅ WebSocket endpoint: ws://localhost:{args.port}/ws/spectator")
     try:
+        # 両方のタスクを並列実行
+        # エラーが発生しても片方が停止しないように個別にエラーハンドリング
+        async def run_spectator_safe():
+            try:
+                await spectator.run_loop()
+            except Exception as e:
+                print(f"\n❌ 観戦エージェントエラー: {e}")
+                import traceback
+                traceback.print_exc()
+        
+        async def run_server_safe():
+            try:
+                await server.serve()
+            except Exception as e:
+                print(f"\n❌ APIサーバーエラー: {e}")
+                import traceback
+                traceback.print_exc()
+        
         await asyncio.gather(
-            spectator.run_loop(),
-            server.serve(),
+            run_spectator_safe(),
+            run_server_safe(),
+            return_exceptions=True
         )
     except KeyboardInterrupt:
         print("\n🛑 終了します")

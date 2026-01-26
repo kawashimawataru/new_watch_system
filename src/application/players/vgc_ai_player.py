@@ -18,7 +18,8 @@ from typing import List, Optional
 
 from poke_env.player import Player
 from poke_env.battle import Battle, DoubleBattle
-from poke_env.ps_client.server_configuration import LocalhostServerConfiguration
+from poke_env.ps_client.server_configuration import LocalhostServerConfiguration, ServerConfiguration
+from src.infrastructure.config import config
 
 from predictor.player.hybrid_strategist import HybridStrategist
 from predictor.core.models import (
@@ -73,6 +74,17 @@ class VGCAIPlayer(Player):
         accept_open_team_sheet: bool = True,
         strategy: str = "heuristic",  # "heuristic" or "mcts"
     ):
+        # Showdownサーバーのポート設定を取得
+        showdown_port = config.showdown.port
+        showdown_host = config.showdown.host
+        
+        # カスタムサーバー設定（ポート8002を使用）
+        if server_configuration is None:
+            server_configuration = ServerConfiguration(
+                f"ws://{showdown_host}:{showdown_port}/showdown/websocket",
+                f"http://{showdown_host}:{showdown_port}/action.php?",
+            )
+        
         super().__init__(
             account_configuration=account_configuration,
             avatar=avatar,
@@ -621,7 +633,7 @@ class VGCAIPlayer(Player):
                         if sw.species not in used_switches:
                             switch_target = sw
                             used_switches.add(sw.species)
-                        order = self.create_order(switch_target)
+                            order = self.create_order(switch_target)
                             orders.append(order)
                             # ロック状態をクリア（交代するので）
                             self.action_filter.clear_lock(sw.species)

@@ -15,7 +15,7 @@ import { BrainCircuit, Presentation, ChartBar, Wifi, WifiOff } from "lucide-reac
 
 export default function SpectatorPage() {
   const { isConnected, gameState, winRateHistory, battleType, candidates, explanation } = useGameState();
-  const [showdownUrl, setShowdownUrl] = useState("http://localhost:8000/");
+  const [showdownUrl, setShowdownUrl] = useState("http://localhost:8002/");
   const [currentEffect, setCurrentEffect] = useState<EffectType>(null);
   const [showReasoning, setShowReasoning] = useState(false);
   const [showVisualMode, setShowVisualMode] = useState(false);

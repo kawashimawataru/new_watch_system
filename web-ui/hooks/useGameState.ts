@@ -98,7 +98,7 @@ interface UseGameStateReturn {
     fieldConditions: FieldConditions | null;  // Phase 24
 }
 
-const WEBSOCKET_URL = "ws://localhost:8001/ws/spectator";
+const WEBSOCKET_URL = "ws://localhost:8000/ws/spectator";
 
 export function useGameState(): UseGameStateReturn {
     const [isConnected, setIsConnected] = useState(false);

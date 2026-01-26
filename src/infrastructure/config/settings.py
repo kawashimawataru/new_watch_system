@@ -19,6 +19,24 @@ class DatabaseConfig:
 
 
 @dataclass
+class SupabaseConfig:
+    """Supabase設定"""
+    url: Optional[str] = None
+    key: Optional[str] = None
+    enabled: bool = False
+    
+    def __post_init__(self):
+        # 環境変数から取得
+        if self.url is None:
+            self.url = os.getenv("SUPABASE_URL")
+        if self.key is None:
+            self.key = os.getenv("SUPABASE_KEY")
+        # URLとキーが設定されていれば有効化
+        if self.url and self.key:
+            self.enabled = True
+
+
+@dataclass
 class WebSocketConfig:
     """WebSocket設定"""
     host: str = "0.0.0.0"
@@ -80,6 +98,7 @@ class AppConfig:
     """アプリケーション全体設定"""
     debug: bool = False
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    supabase: SupabaseConfig = field(default_factory=SupabaseConfig)
     websocket: WebSocketConfig = field(default_factory=WebSocketConfig)
     llm: LLMConfig = field(default_factory=LLMConfig)
     spectator: SpectatorConfig = field(default_factory=SpectatorConfig)
@@ -110,6 +129,10 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
             url=os.getenv("DATABASE_URL", "sqlite:///data/battles.db"),
             echo=os.getenv("DATABASE_ECHO", "false").lower() in ("true", "1"),
         ),
+        supabase=SupabaseConfig(
+            url=os.getenv("SUPABASE_URL"),
+            key=os.getenv("SUPABASE_KEY"),
+        ),
         websocket=WebSocketConfig(
             host=os.getenv("WEBSOCKET_HOST", "0.0.0.0"),
             port=int(os.getenv("WEBSOCKET_PORT", "8000")),
@@ -125,7 +148,7 @@ def load_config(config_path: Optional[Path] = None) -> AppConfig:
         ),
         showdown=ShowdownConfig(
             host=os.getenv("SHOWDOWN_HOST", "localhost"),
-            port=int(os.getenv("SHOWDOWN_PORT", "8000")),
+            port=int(os.getenv("SHOWDOWN_PORT", "8002")),
         ),
         logging=LoggingConfig(
             level=os.getenv("LOG_LEVEL", "INFO"),

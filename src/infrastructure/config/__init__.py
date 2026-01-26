@@ -6,6 +6,7 @@ Configuration infrastructure for VGC AI Spectator
 from src.infrastructure.config.settings import (
     AppConfig,
     DatabaseConfig,
+    SupabaseConfig,
     WebSocketConfig,
     LLMConfig,
     SpectatorConfig,
@@ -16,7 +17,8 @@ from src.infrastructure.config.env import Env
 
 __all__ = [
     "AppConfig",
-    "DatabaseConfig", 
+    "DatabaseConfig",
+    "SupabaseConfig",
     "WebSocketConfig",
     "LLMConfig",
     "SpectatorConfig",

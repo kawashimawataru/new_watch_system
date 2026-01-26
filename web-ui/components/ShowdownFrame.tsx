@@ -10,7 +10,7 @@ interface ShowdownFrameProps {
 }
 
 export const ShowdownFrame: React.FC<ShowdownFrameProps> = ({
-    roomUrl = "http://localhost:8000/",
+    roomUrl = "http://localhost:8002/",
     className,
 }) => {
     return (
@@ -21,6 +21,7 @@ export const ShowdownFrame: React.FC<ShowdownFrameProps> = ({
                 className="w-full h-full border-0 relative z-10"
                 title="Pokemon Showdown"
                 sandbox="allow-same-origin allow-scripts allow-popups allow-forms"
+                allow="fullscreen"
             />
 
             {/* Minimal border/glow */}

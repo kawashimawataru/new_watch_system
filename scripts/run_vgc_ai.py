@@ -30,8 +30,9 @@ sys.path.append(project_root)
 
 # src/application/players からインポート
 from src.application.players.vgc_ai_player import VGCAIPlayer
+from src.infrastructure.config import config
 
-from poke_env.ps_client.server_configuration import LocalhostServerConfiguration
+from poke_env.ps_client.server_configuration import ServerConfiguration
 from poke_env.ps_client.account_configuration import AccountConfiguration
 
 
@@ -158,11 +159,19 @@ async def main():
         # アカウント設定 (ユーザー名を指定)
         account_config = AccountConfiguration(username=args.name, password=None)
         
+        # カスタムサーバー設定（Showdownのポートを取得）
+        showdown_port = config.showdown.port
+        showdown_host = config.showdown.host
+        server_config = ServerConfiguration(
+            f"ws://{showdown_host}:{showdown_port}/showdown/websocket",
+            f"http://{showdown_host}:{showdown_port}/action.php?",
+        )
+        
         # AIプレイヤーを作成
         ai_player = VGCAIPlayer(
             account_configuration=account_config,
             battle_format=args.format,
-            server_configuration=LocalhostServerConfiguration,
+            server_configuration=server_config,
             max_concurrent_battles=1,
             team=team,
             log_level=logging.DEBUG,

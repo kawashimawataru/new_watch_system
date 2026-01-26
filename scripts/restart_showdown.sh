@@ -4,10 +4,17 @@
 cd "$(dirname "$0")/../pokemon-showdown" || exit 1
 
 echo "既存のShowdownプロセスを停止中..."
-# ポート8000を使っているnodeプロセスを探して停止
-PID=$(lsof -iTCP:8000 -sTCP:LISTEN -t 2>/dev/null)
+# ポート8002を使っているnodeプロセスを探して停止
+PID=$(lsof -iTCP:8002 -sTCP:LISTEN -t 2>/dev/null)
 if [ -n "$PID" ]; then
     echo "PID $PID を停止します..."
+    kill "$PID" 2>/dev/null || kill -9 "$PID" 2>/dev/null
+    sleep 1
+fi
+# 念のためポート8000もチェック（古いプロセスが残っている場合）
+PID=$(lsof -iTCP:8000 -sTCP:LISTEN -t 2>/dev/null)
+if [ -n "$PID" ]; then
+    echo "ポート8000のプロセス PID $PID を停止します..."
     kill "$PID" 2>/dev/null || kill -9 "$PID" 2>/dev/null
     sleep 1
 fi

@@ -11,7 +11,8 @@ from typing import Optional, Dict, List, Any
 
 from poke_env.player import Player
 from poke_env.battle import Battle
-from poke_env.ps_client.server_configuration import LocalhostServerConfiguration
+from poke_env.ps_client.server_configuration import LocalhostServerConfiguration, ServerConfiguration, ServerConfiguration
+from src.infrastructure.config import config
 
 from predictor.player.hybrid_strategist import HybridStrategist
 from predictor.core.models import (
@@ -58,6 +59,17 @@ class Spectator(Player):
             server_configuration: サーバー設定
             start_listening: 接続を開始するか
         """
+        # Showdownサーバーのポート設定を取得
+        showdown_port = config.showdown.port
+        showdown_host = config.showdown.host
+        
+        # カスタムサーバー設定（ポート8002を使用）
+        if server_configuration is None:
+            server_configuration = ServerConfiguration(
+                f"ws://{showdown_host}:{showdown_port}/showdown/websocket",
+                f"http://{showdown_host}:{showdown_port}/action.php?",
+            )
+        
         super().__init__(
             account_configuration=account_configuration,
             avatar=avatar,
@@ -81,6 +93,29 @@ class Spectator(Player):
             mcts_max_turns=config.spectator.mcts_max_turns
         )
         
+        # #region agent log
+        try:
+            import json
+            log_data = {
+                "location": "spectator.py:__init__",
+                "message": "Spectator initialized",
+                "data": {
+                    "target_player": self.target_player,
+                    "custom_username": self._custom_username,
+                    "manual_battle_id": self.manual_battle_id,
+                },
+                "timestamp": __import__('time').time(),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "B,C"
+            }
+            with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_data) + "\n")
+        except Exception as e:
+            # ログファイルの書き込みに失敗しても続行
+            pass
+        # #endregion
+        
         logger.info(f"観戦エージェント起動: ターゲット = {self.target_player} (As: {self._custom_username})")
         if self.manual_battle_id:
             logger.info(f"手動指定バトルID: {self.manual_battle_id}")
@@ -89,19 +124,60 @@ class Spectator(Player):
         """
         定期的にターゲットプレイヤーのバトルを検索して参加する
         """
+        # #region agent log
+        try:
+            import json
+            log_data = {
+                "location": "spectator.py:_search_and_join_battles",
+                "message": "Starting battle search",
+                "data": {
+                    "target_player": self.target_player,
+                    "manual_battle_id": self.manual_battle_id,
+                },
+                "timestamp": __import__('time').time(),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "C"
+            }
+            with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                f.write(json.dumps(log_data) + "\n")
+        except Exception:
+            pass
+        # #endregion
+        
+        # WebSocket接続が確立されるまで待つ
+        max_wait = 30  # 最大30秒待つ
+        wait_count = 0
+        while not hasattr(self.ps_client, 'websocket') or self.ps_client.websocket is None:
+            await asyncio.sleep(0.5)
+            wait_count += 1
+            if wait_count > max_wait * 2:  # 0.5秒 * 60 = 30秒
+                logger.error("WebSocket接続が確立されませんでした")
+                return
+        logger.debug("WebSocket接続が確立されました")
+        
         # 名前変更を試みる
-        await self.ps_client.send_message("", f"/nick {self._custom_username}")
-        await asyncio.sleep(1)
+        try:
+            await self.ps_client.send_message("", f"/nick {self._custom_username}")
+            await asyncio.sleep(1)
+        except Exception as e:
+            logger.warning(f"名前変更に失敗: {e}")
         
         # 手動でバトルIDが指定されている場合、直接参加
         if self.manual_battle_id:
             logger.info(f"バトルに参加中: {self.manual_battle_id}")
-            await self.ps_client.send_message("", f"/join {self.manual_battle_id}")
-            self.watched_battles.add(self.manual_battle_id)
+            try:
+                await self.ps_client.send_message("", f"/join {self.manual_battle_id}")
+                self.watched_battles.add(self.manual_battle_id)
+            except Exception as e:
+                logger.error(f"バトル参加に失敗: {e}")
             return
         
         # ロビーに参加
-        await self.ps_client.send_message("", "/join lobby")
+        try:
+            await self.ps_client.send_message("", "/join lobby")
+        except Exception as e:
+            logger.warning(f"ロビー参加に失敗: {e}")
         
         query_idx = 100
         search_interval = config.spectator.battle_search_interval
@@ -204,6 +280,79 @@ class Spectator(Player):
         logger.info(f"観戦開始: {battle.battle_tag}")
         logger.info(f"Players: {battle.player_username} vs {battle.opponent_username}")
         logger.info("=" * 60)
+        
+        # バトル履歴に記録
+        try:
+            from src.infrastructure.persistence import get_battle_history_repository
+            
+            battle_repo = get_battle_history_repository()
+            
+            # バトル形式を検出
+            battle_type = "double"
+            try:
+                from poke_env.battle import DoubleBattle
+                if isinstance(battle, DoubleBattle):
+                    battle_type = "double"
+                else:
+                    battle_type = "single"
+            except Exception:
+                pass
+            
+            # チーム情報を抽出
+            player_team = self._extract_team_info(battle, is_player=True)
+            opponent_team = self._extract_team_info(battle, is_player=False)
+            
+            result = await battle_repo.save_battle_start(
+                battle_id=battle.battle_tag,
+                battle_tag=battle.battle_tag,
+                player_name=self.target_player,
+                opponent_name=battle.opponent_username,
+                format=getattr(battle, "format", "unknown"),
+                battle_type=battle_type,
+                player_team=player_team,
+                opponent_team=opponent_team,
+            )
+            
+            # #region agent log
+            try:
+                log_data = {
+                    "location": "spectator.py:on_battle_start",
+                    "message": "save_battle_start completed",
+                    "data": {
+                        "result": result is not None,
+                        "record_id": result,
+                    },
+                    "timestamp": __import__('time').time(),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "C"
+                }
+                with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps(log_data) + "\n")
+            except Exception:
+                pass
+            # #endregion
+        except Exception as e:
+            # #region agent log
+            try:
+                log_data = {
+                    "location": "spectator.py:on_battle_start",
+                    "message": "Exception in save_battle_start",
+                    "data": {
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    },
+                    "timestamp": __import__('time').time(),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "E"
+                }
+                with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps(log_data) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            logger.debug(f"Failed to save battle start to history: {e}")
 
     async def on_battle_end(self, battle: Battle) -> None:
         """バトル終了時の処理"""
@@ -211,6 +360,89 @@ class Spectator(Player):
         logger.info(f"バトル終了: {battle.battle_tag}")
         logger.info(f"Winner: {battle.won}")
         logger.info("=" * 60)
+        
+        # バトル履歴に記録
+        try:
+            # #region agent log
+            import json
+            try:
+                log_data = {
+                    "location": "spectator.py:on_battle_end",
+                    "message": "Attempting to save battle end",
+                    "data": {
+                        "battle_tag": battle.battle_tag,
+                        "has_won_attr": hasattr(battle, "won"),
+                        "won_value": getattr(battle, "won", None),
+                    },
+                    "timestamp": __import__('time').time(),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "C"
+                }
+                with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps(log_data) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            
+            from src.infrastructure.persistence import get_battle_history_repository
+            
+            battle_repo = get_battle_history_repository()
+            
+            # 勝者を判定
+            winner = None
+            if hasattr(battle, "won") and battle.won is not None:
+                if battle.won:
+                    winner = "player"
+                else:
+                    winner = "opponent"
+            
+            result = await battle_repo.save_battle_end(
+                battle_id=battle.battle_tag,
+                winner=winner,
+                total_turns=getattr(battle, "turn", 0),
+                final_win_rate=self._win_rate_history[-1]["winRate"] if self._win_rate_history else None,
+            )
+            
+            # #region agent log
+            try:
+                log_data = {
+                    "location": "spectator.py:on_battle_end",
+                    "message": "save_battle_end completed",
+                    "data": {
+                        "result": result,
+                    },
+                    "timestamp": __import__('time').time(),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "C"
+                }
+                with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps(log_data) + "\n")
+            except Exception:
+                pass
+            # #endregion
+        except Exception as e:
+            # #region agent log
+            try:
+                log_data = {
+                    "location": "spectator.py:on_battle_end",
+                    "message": "Exception in save_battle_end",
+                    "data": {
+                        "error_type": type(e).__name__,
+                        "error_message": str(e),
+                    },
+                    "timestamp": __import__('time').time(),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "E"
+                }
+                with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                    f.write(json.dumps(log_data) + "\n")
+            except Exception:
+                pass
+            # #endregion
+            logger.debug(f"Failed to save battle end to history: {e}")
 
     def _process_battle_message(self, message: str, battle: Battle) -> None:
         """バトルメッセージを処理"""
@@ -426,6 +658,88 @@ class Spectator(Player):
             
             await broker.broadcast(message)
             logger.debug(f"ブロードキャスト完了: Turn {battle.turn}")
+            
+            # バトル履歴にターン分析を記録
+            try:
+                # #region agent log
+                import json
+                try:
+                    log_data = {
+                        "location": "spectator.py:_broadcast_state",
+                        "message": "Attempting to save turn analysis",
+                        "data": {
+                            "battle_tag": battle.battle_tag,
+                            "turn": battle.turn,
+                        },
+                        "timestamp": __import__('time').time(),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D"
+                    }
+                    with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps(log_data) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+                
+                from src.infrastructure.persistence import get_battle_history_repository
+                
+                battle_repo = get_battle_history_repository()
+                result = await battle_repo.save_turn_analysis(
+                    battle_id=battle.battle_tag,
+                    turn=battle.turn,
+                    win_rate=analysis.win_rate,
+                    board_score=analysis.board_score.total,
+                    candidates=[c.to_dict() for c in analysis.candidates],
+                    explanation={
+                        "playerStrategy": analysis.explanation.recommended_strategy,
+                        "opponentThreat": analysis.explanation.opponent_prediction,
+                        "currentSituation": analysis.explanation.current_situation,
+                        "topCandidateReason": analysis.explanation.top_candidate_reason,
+                        "riskAnalysis": analysis.explanation.risk_analysis,
+                    },
+                    field_conditions=field_state,
+                )
+                
+                # #region agent log
+                try:
+                    log_data = {
+                        "location": "spectator.py:_broadcast_state",
+                        "message": "save_turn_analysis completed",
+                        "data": {
+                            "result": result,
+                        },
+                        "timestamp": __import__('time').time(),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "D"
+                    }
+                    with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps(log_data) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+            except Exception as e:
+                # #region agent log
+                try:
+                    log_data = {
+                        "location": "spectator.py:_broadcast_state",
+                        "message": "Exception in save_turn_analysis",
+                        "data": {
+                            "error_type": type(e).__name__,
+                            "error_message": str(e),
+                        },
+                        "timestamp": __import__('time').time(),
+                        "sessionId": "debug-session",
+                        "runId": "run1",
+                        "hypothesisId": "E"
+                    }
+                    with open("/Users/kawashimawataru/Desktop/new_watch_game_system/.cursor/debug.log", "a") as f:
+                        f.write(json.dumps(log_data) + "\n")
+                except Exception:
+                    pass
+                # #endregion
+                logger.debug(f"Failed to save turn analysis to history: {e}")
             
         except Exception as e:
             logger.error(f"ブロードキャストエラー: {e}", exc_info=True)
